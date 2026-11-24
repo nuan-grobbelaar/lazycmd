@@ -33,7 +33,7 @@ func renderPanel(title, body string, width, height int, focused bool) string {
 	innerHeight := max(0, height-2)
 
 	label := " " + title + " "
-	rule := width - 2 - lipgloss.Width(label)
+	rule := width - 3 - lipgloss.Width(label) // 3 = "╭─" (2) + "╮" (1)
 	if rule < 1 {
 		rule = 1
 	}
