@@ -14,6 +14,9 @@ const sidecarSuffix = ".lazycast.yaml"
 // optional sidecar, or after reading a commands.yaml entry. It's the
 // shape the UI and, later, the runner work with.
 type ResolvedCommand struct {
+	// ID is stable across runs (e.g. "global:deploy-staging",
+	// "project:deploy"), for keying the usage log.
+	ID         string
 	Name       string
 	Desc       string
 	Mode       Mode
@@ -35,12 +38,12 @@ type Group struct {
 // entry) are collected as warnings and skip just that file or entry;
 // they never abort discovery.
 func Discover(globalDir, projectDir string) (groups []Group, warnings []string) {
-	globalCmds, warnings := scanScripts(filepath.Join(globalDir, "scripts"), warnings)
+	globalCmds, warnings := scanScripts(filepath.Join(globalDir, "scripts"), "global", warnings)
 
 	var projectCmds []ResolvedCommand
 	if info, err := os.Stat(projectDir); err == nil && info.IsDir() {
 		var scriptWarnings []string
-		projectCmds, scriptWarnings = scanScripts(filepath.Join(projectDir, "scripts"), nil)
+		projectCmds, scriptWarnings = scanScripts(filepath.Join(projectDir, "scripts"), "project", nil)
 		warnings = append(warnings, scriptWarnings...)
 
 		fileCmds, fileWarnings := loadCommandsFile(projectDir)
@@ -76,8 +79,9 @@ func sortByName(cmds []ResolvedCommand) {
 }
 
 // scanScripts finds executable files directly under dir and upgrades each
-// with its sidecar, if one exists next to it.
-func scanScripts(dir string, warnings []string) ([]ResolvedCommand, []string) {
+// with its sidecar, if one exists next to it. scope ("global" or
+// "project") prefixes the resulting command IDs.
+func scanScripts(dir, scope string, warnings []string) ([]ResolvedCommand, []string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, warnings
@@ -95,7 +99,7 @@ func scanScripts(dir string, warnings []string) ([]ResolvedCommand, []string) {
 
 		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		scriptPath := filepath.Join(dir, entry.Name())
-		cmd := ResolvedCommand{Name: name, Mode: ModePanel, ScriptPath: scriptPath}
+		cmd := ResolvedCommand{ID: scope + ":" + name, Name: name, Mode: ModePanel, ScriptPath: scriptPath}
 
 		sidecarPath := filepath.Join(dir, name+sidecarSuffix)
 		if _, err := os.Stat(sidecarPath); err == nil {
@@ -134,7 +138,7 @@ func loadCommandsFile(projectDir string) ([]ResolvedCommand, []string) {
 			warnings = append(warnings, fmt.Sprintf("%s: command %q must set exactly one of run or script", path, name))
 			continue
 		}
-		cmd := ResolvedCommand{Name: name, Mode: ModePanel}
+		cmd := ResolvedCommand{ID: "project:" + name, Name: name, Mode: ModePanel}
 		applySpec(&cmd, spec)
 		if hasScript {
 			cmd.ScriptPath = filepath.Join(projectDir, spec.Script)

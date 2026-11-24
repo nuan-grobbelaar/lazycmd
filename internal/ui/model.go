@@ -12,6 +12,7 @@ import (
 
 	"lazycast/internal/config"
 	"lazycast/internal/jobs"
+	"lazycast/internal/usage"
 )
 
 const pollInterval = 50 * time.Millisecond
@@ -37,6 +38,7 @@ type Model struct {
 	warnings    []string
 	stateDir    string
 	projectRoot string
+	usageLog    *usage.Log
 
 	viewport    viewport.Model
 	followTail  bool
@@ -59,6 +61,14 @@ type flatRow struct {
 }
 
 func New(groups []config.Group, warnings []string, stateDir, projectRoot string) Model {
+	usageLog := usage.Load(stateDir)
+	now := time.Now()
+	for i := range groups {
+		if groups[i].Title == "Global" {
+			usageLog.SortByUsage(groups[i].Commands, projectRoot, now)
+		}
+	}
+
 	all := flattenGroups(groups)
 	return Model{
 		allRows:     all,
@@ -67,6 +77,7 @@ func New(groups []config.Group, warnings []string, stateDir, projectRoot string)
 		warnings:    warnings,
 		stateDir:    stateDir,
 		projectRoot: projectRoot,
+		usageLog:    usageLog,
 	}
 }
 
@@ -303,6 +314,10 @@ func (m Model) selectRow() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string) (tea.Model, tea.Cmd) {
+	now := time.Now()
+	m.usageLog.Record(m.projectRoot, cmdSpec.ID, now)
+	_ = m.usageLog.Save(m.stateDir) // best effort; a dropped usage tick isn't worth surfacing
+
 	m.jobSeq++
 	id := fmt.Sprintf("%s-%d", cmdSpec.Name, m.jobSeq)
 
