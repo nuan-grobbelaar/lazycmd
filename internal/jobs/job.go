@@ -51,6 +51,7 @@ type Job struct {
 	exitCode  int
 	startedAt time.Time
 	endedAt   time.Time
+	closed    bool // ptmx has been closed; Write/EchoEnabled must not touch it once set
 
 	ptmx    *os.File
 	cmd     *exec.Cmd
@@ -123,6 +124,10 @@ func paramEnv(values map[string]string) []string {
 func (j *Job) readLoop() {
 	buf := make([]byte, 4096)
 	for {
+		// Unsynchronized against Write/EchoEnabled is fine here: Read and
+		// Write pull in independent directions on the same fd, and this
+		// loop only ever races the one thing that actually matters -
+		// Close, below, which does take the lock.
 		n, err := j.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
@@ -135,7 +140,12 @@ func (j *Job) readLoop() {
 			break
 		}
 	}
+
+	j.mu.Lock()
+	j.closed = true
 	j.ptmx.Close()
+	j.mu.Unlock()
+
 	if j.logFile != nil {
 		j.logFile.Close()
 	}
@@ -180,7 +190,14 @@ func (j *Job) Kill() {
 
 // Write sends keystrokes to the job's PTY, i.e. to the running
 // program's stdin, for focus mode and for answering a detected prompt.
+// A no-op once the job has finished and closed its PTY - racing that
+// close is exactly what the lock here prevents.
 func (j *Job) Write(p []byte) (int, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return 0, os.ErrClosed
+	}
 	return j.ptmx.Write(p)
 }
 
@@ -189,6 +206,11 @@ func (j *Job) Write(p []byte) (int, error) {
 // lets the UI mask the popup for that prompt without the program ever
 // telling us explicitly that it's a password.
 func (j *Job) EchoEnabled() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return true
+	}
 	term, err := unix.IoctlGetTermios(int(j.ptmx.Fd()), ioctlGetTermios)
 	if err != nil {
 		return true
