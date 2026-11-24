@@ -1,0 +1,18 @@
+desc: Print one value of every param type, for exercising the params form
+params:
+  - name: message
+    type: string
+    required: true
+  - name: environment
+    type: select
+    options: [dev, staging, prod]
+  - name: features
+    type: multi
+    options: [logging, metrics, tracing]
+  - name: confirm
+    type: bool
+    default: "true"
+  - name: api_key
+    type: secret
+  - name: notes
+    type: text
