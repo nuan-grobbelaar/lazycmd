@@ -41,7 +41,7 @@ func renderPanel(title, body string, width, height int, focused bool) string {
 	label := ansi.Truncate(" "+title+" ", max(0, width-3), "")
 	rule := max(0, width-3-lipgloss.Width(label))
 	topLine := border.Render("╭─") + titleStyle.Render(label) + border.Render(strings.Repeat("─", rule)+"╮")
-	bottomLine := border.Render("╰" + strings.Repeat("─", width-2) + "╯")
+	bottomLine := border.Render("╰" + strings.Repeat("─", innerWidth) + "╯")
 
 	lines := strings.Split(body, "\n")
 	for len(lines) < innerHeight {

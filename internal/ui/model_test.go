@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,62 @@ func writeExecutable(t *testing.T, path, script string) {
 	}
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestViewShowsAllThreePanelTitles(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	view := m.View()
+	for _, title := range []string{"[1] Commands", "[2] Output", "[3] Jobs"} {
+		if !strings.Contains(view, title) {
+			t.Errorf("View() missing panel title %q", title)
+		}
+	}
+}
+
+func TestViewShowsFormAsAnOverlay(t *testing.T) {
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:greet", Name: "greet", Run: "echo hi", Params: []config.Param{
+			{Name: "who", Type: config.ParamString},
+		}},
+	}}}
+	m := ready(t, groups, t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := m.View()
+	if !strings.Contains(view, "Params: greet") {
+		t.Errorf("View() missing the form modal title; got:\n%s", view)
+	}
+	// The base view behind the modal should still be present - that's
+	// the whole point of an overlay instead of replacing panel content.
+	if !strings.Contains(view, "[1] Commands") {
+		t.Errorf("View() lost the base panels behind the modal")
+	}
+}
+
+func TestViewDoesNotPanicAtDegenerateSizes(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{0, 0}, {1, 1}, {5, 3}, {-1, -1}} {
+		m := New(testGroups(), nil, t.TempDir(), "/repo")
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		m = updated.(Model)
+		m.View() // must not panic
+	}
+}
+
+func TestEmptyStateMessageDistinguishesNoCommandsFromNoMatches(t *testing.T) {
+	m := ready(t, nil, t.TempDir(), "/repo")
+	if !strings.Contains(m.renderList(), "no commands found") {
+		t.Errorf("expected the no-commands-at-all message when nothing is configured")
+	}
+
+	m = ready(t, testGroups(), t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("nonexistent")})
+	if !strings.Contains(m.renderList(), "no matches") {
+		t.Errorf("expected the no-matches message when a filter excludes everything")
+	}
+	if strings.Contains(m.renderList(), "no commands found") {
+		t.Errorf("should not show the no-commands message when commands exist but are filtered out")
 	}
 }
 
