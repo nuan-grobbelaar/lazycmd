@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -50,6 +51,12 @@ type Model struct {
 	jobSeq      int
 
 	activeForm *paramsForm
+
+	inputFocus bool // raw PTY focus mode: every key but esc goes to the job
+
+	promptActive       bool
+	promptInput        textinput.Model
+	promptDismissedFor string // last pending line shown/answered, so it can't re-trigger itself
 
 	ready bool
 }
@@ -172,6 +179,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.promptActive {
+			return m.updatePromptPopup(msg)
+		}
+		if m.inputFocus {
+			return m.updateInputFocus(msg)
+		}
 		if m.filtering {
 			return m.updateFiltering(msg)
 		}
@@ -228,10 +241,39 @@ func (m Model) updatePoll(msg pollMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	var cmds []tea.Cmd
 	if status == jobs.StatusRunning {
-		return m, pollTick(m.pollGen)
+		if !m.promptActive && !m.inputFocus {
+			if cmd := m.maybeOpenPrompt(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		cmds = append(cmds, pollTick(m.pollGen))
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
+}
+
+// maybeOpenPrompt checks the active job's unfinished line against the
+// "looks like a prompt" heuristic. Only the job currently shown in the
+// output panel is ever checked - a background job doesn't steal focus,
+// it just doesn't get this treatment, since only the displayed job's
+// buffer is polled at all.
+func (m *Model) maybeOpenPrompt() tea.Cmd {
+	pending, lastWrite := m.activeJob.Buffer.PendingLine()
+	if !looksLikePrompt(pending) || pending == m.promptDismissedFor {
+		return nil
+	}
+	if time.Since(lastWrite) < promptPauseThreshold {
+		return nil
+	}
+
+	m.promptInput = textinput.New()
+	m.promptInput.Prompt = "> "
+	if !m.activeJob.EchoEnabled() {
+		m.promptInput.EchoMode = textinput.EchoPassword
+	}
+	m.promptActive = true
+	return m.promptInput.Focus()
 }
 
 func (m Model) updateFiltering(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -254,6 +296,43 @@ func (m Model) updateFiltering(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyFilter()
 	}
 	return m, nil
+}
+
+// updateInputFocus forwards every key except esc straight to the job's
+// PTY, so the running program sees exactly what a real terminal would
+// have sent it. Esc is the one reserved key that leaves the mode.
+func (m Model) updateInputFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEsc {
+		m.inputFocus = false
+		return m, nil
+	}
+	if m.activeJob != nil {
+		if b := keyToPTYBytes(msg); b != nil {
+			m.activeJob.Write(b)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updatePromptPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		pending, _ := m.activeJob.Buffer.PendingLine()
+		m.promptDismissedFor = pending
+		m.promptActive = false
+		return m, nil
+	case tea.KeyEnter:
+		pending, _ := m.activeJob.Buffer.PendingLine()
+		m.promptDismissedFor = pending
+		m.promptActive = false
+		if m.activeJob != nil {
+			m.activeJob.Write([]byte(m.promptInput.Value() + "\r"))
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.promptInput, cmd = m.promptInput.Update(msg)
+	return m, cmd
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -279,6 +358,13 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.focus == focusList && m.cursor >= 0 && !m.rows[m.cursor].isHeader {
 			return m.selectRow()
+		}
+		return m, nil
+	case "i":
+		if m.focus == focusOutput && m.activeJob != nil {
+			if status, _, _ := m.activeJob.Snapshot(); status == jobs.StatusRunning {
+				m.inputFocus = true
+			}
 		}
 		return m, nil
 	}
@@ -390,10 +476,27 @@ func (m Model) View() string {
 	outputTitle := "[2] Output"
 	outputBody := m.viewport.View()
 	outputFocused := m.focus == focusOutput
-	if m.activeForm != nil {
+
+	switch {
+	case m.activeForm != nil:
 		outputTitle = "[2] Params: " + m.activeForm.cmd.Name
 		previewStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 		outputBody = previewStyle.Render(m.activeForm.preview()) + "\n\n" + m.activeForm.form.View()
+		outputFocused = true
+	case m.promptActive:
+		// viewport.View() always pads to exactly its set Height, so
+		// appending the prompt input after it would get clipped by the
+		// panel's fixed line budget (same trap as the params preview).
+		// Swapping in the last line instead can't overflow.
+		outputTitle = "[2] Input requested"
+		lines := strings.Split(m.viewport.View(), "\n")
+		if n := len(lines); n > 0 {
+			lines[n-1] = m.promptInput.View()
+		}
+		outputBody = strings.Join(lines, "\n")
+		outputFocused = true
+	case m.inputFocus:
+		outputTitle = "[2] Output (input mode)"
 		outputFocused = true
 	}
 	outputPanel := renderPanel(outputTitle, outputBody, outputWidth, bodyHeight, outputFocused)
@@ -454,10 +557,14 @@ func (m Model) runningJobCount() int {
 
 func (m Model) renderKeyBar() string {
 	style := lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width)
-	if m.activeForm != nil {
+	switch {
+	case m.activeForm != nil:
 		return style.Render(" tab/shift+tab move  enter next  esc cancel")
-	}
-	if m.filtering {
+	case m.promptActive:
+		return style.Render(" type your answer  enter send  esc dismiss")
+	case m.inputFocus:
+		return style.Render(" input mode: keys go straight to the process  esc leave")
+	case m.filtering:
 		return style.Render(" type to filter  enter confirm  esc clear")
 	}
 
@@ -470,5 +577,9 @@ func (m Model) renderKeyBar() string {
 	if bg := m.runningJobCount(); bg > 0 {
 		status = fmt.Sprintf("%s, %d background", status, bg)
 	}
-	return style.Render(fmt.Sprintf(" ↑/↓ select  enter run  tab focus  / filter  q quit   [%s]", status))
+	hint := " ↑/↓ select  enter run  tab focus  / filter  q quit   [%s]"
+	if m.focus == focusOutput && m.activeJob != nil {
+		hint = " ↑/↓ select  enter run  tab focus  i input  / filter  q quit   [%s]"
+	}
+	return style.Render(fmt.Sprintf(hint, status))
 }

@@ -3,6 +3,7 @@ package jobs
 import (
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxScrollbackLines = 10000
@@ -16,6 +17,7 @@ type OutputBuffer struct {
 	current   []byte
 	pendingCR bool // last chunk ended in '\r'; its meaning depends on this chunk's first byte
 	version   uint64
+	lastWrite time.Time
 }
 
 // Write appends a chunk of raw PTY output. A PTY in cooked mode (the
@@ -58,6 +60,7 @@ func (b *OutputBuffer) Write(p []byte) {
 		}
 	}
 	b.version++
+	b.lastWrite = time.Now()
 }
 
 func (b *OutputBuffer) commitLine() {
@@ -89,4 +92,14 @@ func (b *OutputBuffer) Snapshot() (content string, version uint64) {
 	}
 	sb.Write(b.current)
 	return sb.String(), b.version
+}
+
+// PendingLine returns the current incomplete line (no trailing newline
+// yet) and when it was last written to, for prompt detection: a pause
+// after a line with no newline is what distinguishes a prompt awaiting
+// input from a program that's merely between lines of normal output.
+func (b *OutputBuffer) PendingLine() (line string, lastWrite time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.current), b.lastWrite
 }

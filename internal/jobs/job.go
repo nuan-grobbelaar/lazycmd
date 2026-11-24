@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 
 	"lazycast/internal/config"
 )
@@ -171,4 +172,22 @@ func (j *Job) Kill() {
 	if j.cmd.Process != nil {
 		_ = j.cmd.Process.Kill()
 	}
+}
+
+// Write sends keystrokes to the job's PTY, i.e. to the running
+// program's stdin, for focus mode and for answering a detected prompt.
+func (j *Job) Write(p []byte) (int, error) {
+	return j.ptmx.Write(p)
+}
+
+// EchoEnabled reports whether the PTY currently has local echo on. A
+// program turns it off right before a password prompt, which is what
+// lets the UI mask the popup for that prompt without the program ever
+// telling us explicitly that it's a password.
+func (j *Job) EchoEnabled() bool {
+	term, err := unix.IoctlGetTermios(int(j.ptmx.Fd()), ioctlGetTermios)
+	if err != nil {
+		return true
+	}
+	return term.Lflag&unix.ECHO != 0
 }
