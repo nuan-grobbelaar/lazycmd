@@ -32,11 +32,14 @@ func renderPanel(title, body string, width, height int, focused bool) string {
 	innerWidth := max(0, width-2)
 	innerHeight := max(0, height-2)
 
-	label := " " + title + " "
-	rule := width - 3 - lipgloss.Width(label) // 3 = "╭─" (2) + "╮" (1)
-	if rule < 1 {
-		rule = 1
-	}
+	// 3 = "╭─" (2) + "╮" (1); the label is clamped to what's left so the
+	// top line is always exactly `width` wide even when the panel is
+	// narrower than its own title - otherwise this line alone overflows
+	// while every other line in the box is correctly sized, producing a
+	// ragged block that breaks downstream composition (JoinHorizontal,
+	// the overlay splice).
+	label := ansi.Truncate(" "+title+" ", max(0, width-3), "")
+	rule := max(0, width-3-lipgloss.Width(label))
 	topLine := border.Render("╭─") + titleStyle.Render(label) + border.Render(strings.Repeat("─", rule)+"╮")
 	bottomLine := border.Render("╰" + strings.Repeat("─", width-2) + "╯")
 

@@ -51,3 +51,21 @@ func TestKeyToPTYBytesUnhandledKeyIsNil(t *testing.T) {
 		t.Errorf("expected nil for an unhandled key, got %q", got)
 	}
 }
+
+func TestClampInt(t *testing.T) {
+	cases := []struct {
+		desired, min, max, want int
+	}{
+		{70, 40, 100, 70}, // within range: desired wins
+		{70, 40, 50, 50},  // above max: clamp down
+		{10, 40, 50, 40},  // below min: clamp up
+		{70, 40, 34, 34},  // screen tighter than the floor: availability wins, not the floor
+		{70, 40, 0, 1},    // degenerate: never return <= 0
+		{70, 40, -5, 1},
+	}
+	for _, c := range cases {
+		if got := clampInt(c.desired, c.min, c.max); got != c.want {
+			t.Errorf("clampInt(%d, %d, %d) = %d, want %d", c.desired, c.min, c.max, got, c.want)
+		}
+	}
+}

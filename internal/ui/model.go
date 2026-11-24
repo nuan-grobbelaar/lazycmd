@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"lazycast/internal/config"
 	"lazycast/internal/jobs"
@@ -580,9 +581,16 @@ func (m Model) dims() (listWidth, outputWidth, jobsWidth, bodyHeight int) {
 	return
 }
 
+// clampInt picks desired, bounded to [min, max]. If the terminal is so
+// small that max itself falls below min, actual available space wins
+// over the aesthetic floor - a modal that's merely cramped beats one
+// that silently overflows the screen it's centered on.
 func clampInt(desired, min, max int) int {
 	if max < min {
-		return min
+		if max < 1 {
+			return 1
+		}
+		return max
 	}
 	if desired < min {
 		return min
@@ -788,18 +796,29 @@ func (m Model) runningJobCount() int {
 }
 
 func (m Model) renderKeyBar() string {
-	style := lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width)
+	text := m.keyBarText()
+	// lipgloss's Width() wraps content that's too long rather than
+	// truncating it, which would make the key bar quietly consume a
+	// second screen row the height math never accounts for - throwing
+	// off bodyHeight for every panel and, on a narrow enough terminal,
+	// pushing the true top row off the bottom of the alt screen
+	// entirely. Truncating first keeps it to the one row it's budgeted.
+	text = ansi.Truncate(text, m.width, "…")
+	return lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width).Render(text)
+}
+
+func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
-		return style.Render(" tab/shift+tab move  enter next  esc cancel")
+		return " tab/shift+tab move  enter next  esc cancel"
 	case m.promptActive:
-		return style.Render(" type your answer  enter send  esc dismiss")
+		return " type your answer  enter send  esc dismiss"
 	case m.inputFocus:
-		return style.Render(" input mode: keys go straight to the process  esc leave")
+		return " input mode: keys go straight to the process  esc leave"
 	case m.filtering:
-		return style.Render(" type to filter  enter confirm  esc clear")
+		return " type to filter  enter confirm  esc clear"
 	case m.focus == focusJobs:
-		return style.Render(" ↑/↓ select  enter view  x stop  r restart  tab focus  ? help  q quit")
+		return " ↑/↓ select  enter view  x stop  r restart  tab focus  ? help  q quit"
 	}
 
 	status := "idle"
@@ -815,7 +834,7 @@ func (m Model) renderKeyBar() string {
 	if m.focus == focusOutput && m.activeJob != nil {
 		hint = " ↑/↓ select  enter run  t terminal  tab focus  i input  / filter  ? help  q quit   [%s]"
 	}
-	return style.Render(fmt.Sprintf(hint, status))
+	return fmt.Sprintf(hint, status)
 }
 
 func (m Model) renderHelp() string {
