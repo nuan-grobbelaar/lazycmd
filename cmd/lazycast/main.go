@@ -31,7 +31,7 @@ func main() {
 	projectDir := filepath.Join(cwd, ".lazycast")
 	groups, warnings := config.Discover(globalDir, projectDir)
 
-	p := tea.NewProgram(ui.New(groups, warnings, stateDir), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(groups, warnings, stateDir, cwd), tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if m, ok := finalModel.(ui.Model); ok {
 		m.Shutdown()

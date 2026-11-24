@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	"lazycast/internal/config"
@@ -33,8 +34,9 @@ type Model struct {
 	filtering   bool
 	filterQuery string
 
-	warnings []string
-	stateDir string
+	warnings    []string
+	stateDir    string
+	projectRoot string
 
 	viewport    viewport.Model
 	followTail  bool
@@ -45,6 +47,8 @@ type Model struct {
 	pollGen     int
 	jobSeq      int
 
+	activeForm *paramsForm
+
 	ready bool
 }
 
@@ -54,14 +58,15 @@ type flatRow struct {
 	cmd      config.ResolvedCommand
 }
 
-func New(groups []config.Group, warnings []string, stateDir string) Model {
+func New(groups []config.Group, warnings []string, stateDir, projectRoot string) Model {
 	all := flattenGroups(groups)
 	return Model{
-		allRows:  all,
-		rows:     all,
-		cursor:   firstSelectable(all),
-		warnings: warnings,
-		stateDir: stateDir,
+		allRows:     all,
+		rows:        all,
+		cursor:      firstSelectable(all),
+		warnings:    warnings,
+		stateDir:    stateDir,
+		projectRoot: projectRoot,
 	}
 }
 
@@ -140,13 +145,21 @@ func pollTick(gen int) tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = wsMsg.Width, wsMsg.Height
 		m.layout()
 		m.ready = true
+		if m.activeForm != nil {
+			return m.updateActiveForm(msg)
+		}
 		return m, nil
+	}
 
+	if m.activeForm != nil {
+		return m.updateActiveForm(msg)
+	}
+
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.filtering {
 			return m.updateFiltering(msg)
@@ -159,6 +172,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
+}
+
+// updateActiveForm forwards every message to the open params form. huh
+// drives async field behavior (a slow options_cmd, its loading spinner)
+// through its own internal message types, not just key presses, so
+// everything has to pass through here while a form is open, not just
+// tea.KeyMsg.
+func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.activeForm.form.Update(msg)
+	m.activeForm.form = updated.(*huh.Form)
+
+	switch m.activeForm.form.State {
+	case huh.StateCompleted:
+		cmdSpec := m.activeForm.cmd
+		values := m.activeForm.values()
+		m.activeForm = nil
+		return m.startJob(cmdSpec, values)
+	case huh.StateAborted:
+		m.activeForm = nil
+		return m, nil
+	}
 	return m, cmd
 }
 
@@ -232,7 +267,7 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if m.focus == focusList && m.cursor >= 0 && !m.rows[m.cursor].isHeader {
-			return m.runSelected()
+			return m.selectRow()
 		}
 		return m, nil
 	}
@@ -253,20 +288,33 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) runSelected() (tea.Model, tea.Cmd) {
-	row := m.rows[m.cursor]
-	m.jobSeq++
-	id := fmt.Sprintf("%s-%d", row.cmd.Name, m.jobSeq)
+// selectRow runs the selected command directly if it takes no params,
+// or opens a params form first if it does.
+func (m Model) selectRow() (tea.Model, tea.Cmd) {
+	cmdSpec := m.rows[m.cursor].cmd
+	if len(cmdSpec.Params) == 0 {
+		return m.startJob(cmdSpec, nil)
+	}
 
-	job, err := jobs.Start(id, row.cmd, nil, m.stateDir)
+	_, outputWidth, bodyHeight := m.dims()
+	m.activeForm = newParamsForm(cmdSpec, m.projectRoot)
+	m.activeForm.form = m.activeForm.form.WithWidth(outputWidth - 2).WithHeight(bodyHeight - 2 - previewReserveLines)
+	return m, m.activeForm.form.Init()
+}
+
+func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string) (tea.Model, tea.Cmd) {
+	m.jobSeq++
+	id := fmt.Sprintf("%s-%d", cmdSpec.Name, m.jobSeq)
+
+	job, err := jobs.Start(id, cmdSpec, values, m.stateDir)
 	if err != nil {
-		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", row.label, err))
+		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", cmdSpec.Name, err))
 		return m, nil
 	}
 
 	m.jobs = append(m.jobs, job)
 	m.activeJob = job
-	m.activeHdr = "$ " + row.label + "\n"
+	m.activeHdr = "$ " + cmdSpec.Name + "\n"
 	m.lastVersion = 0
 	m.followTail = true
 	m.viewport.SetContent(m.activeHdr)
@@ -285,15 +333,23 @@ func (m *Model) moveCursor(delta int) {
 }
 
 const (
-	listWidthFrac = 0.32
-	keyBarHeight  = 1
+	listWidthFrac       = 0.32
+	keyBarHeight        = 1
+	previewReserveLines = 2 // preview line + blank separator, above the form
 )
 
-func (m *Model) layout() {
-	listWidth := int(float64(m.width) * listWidthFrac)
-	outputWidth := m.width - listWidth
-	bodyHeight := m.height - keyBarHeight
+// dims returns the list panel width, output panel width and body height
+// (all outer, border-inclusive), shared by layout, View and selectRow so
+// they can't drift apart.
+func (m Model) dims() (listWidth, outputWidth, bodyHeight int) {
+	listWidth = int(float64(m.width) * listWidthFrac)
+	outputWidth = m.width - listWidth
+	bodyHeight = m.height - keyBarHeight
+	return
+}
 
+func (m *Model) layout() {
+	_, outputWidth, bodyHeight := m.dims()
 	m.viewport = viewport.New(outputWidth-2, bodyHeight-2)
 	m.viewport.SetContent(m.initialOutputText())
 }
@@ -312,12 +368,20 @@ func (m Model) View() string {
 		return "starting lazycast..."
 	}
 
-	listWidth := int(float64(m.width) * listWidthFrac)
-	outputWidth := m.width - listWidth
-	bodyHeight := m.height - keyBarHeight
+	listWidth, outputWidth, bodyHeight := m.dims()
 
 	listPanel := renderPanel("[1] Commands", m.renderList(), listWidth, bodyHeight, m.focus == focusList)
-	outputPanel := renderPanel("[2] Output", m.viewport.View(), outputWidth, bodyHeight, m.focus == focusOutput)
+
+	outputTitle := "[2] Output"
+	outputBody := m.viewport.View()
+	outputFocused := m.focus == focusOutput
+	if m.activeForm != nil {
+		outputTitle = "[2] Params: " + m.activeForm.cmd.Name
+		previewStyle := lipgloss.NewStyle().Foreground(colorTextDim)
+		outputBody = previewStyle.Render(m.activeForm.preview()) + "\n\n" + m.activeForm.form.View()
+		outputFocused = true
+	}
+	outputPanel := renderPanel(outputTitle, outputBody, outputWidth, bodyHeight, outputFocused)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, outputPanel)
 	keyBar := m.renderKeyBar()
@@ -375,6 +439,9 @@ func (m Model) runningJobCount() int {
 
 func (m Model) renderKeyBar() string {
 	style := lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width)
+	if m.activeForm != nil {
+		return style.Render(" tab/shift+tab move  enter next  esc cancel")
+	}
 	if m.filtering {
 		return style.Render(" type to filter  enter confirm  esc clear")
 	}
