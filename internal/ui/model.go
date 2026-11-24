@@ -66,6 +66,8 @@ type Model struct {
 
 	inputFocus bool // raw PTY focus mode: every key but esc goes to the job
 
+	helpActive bool
+
 	promptActive       bool
 	promptInput        textinput.Model
 	promptDismissedFor string // last pending line shown/answered, so it can't re-trigger itself
@@ -191,6 +193,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.helpActive {
+			m.helpActive = false
+			return m, nil
+		}
 		if m.promptActive {
 			return m.updatePromptPopup(msg)
 		}
@@ -365,6 +371,9 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "?":
+		m.helpActive = true
+		return m, nil
 	case "/":
 		m.filtering = true
 		return m, nil
@@ -526,6 +535,9 @@ func (m Model) View() string {
 	if !m.ready {
 		return "starting lazycast..."
 	}
+	if m.helpActive {
+		return m.renderHelp()
+	}
 
 	listWidth, outputWidth, bodyHeight := m.dims()
 
@@ -635,9 +647,46 @@ func (m Model) renderKeyBar() string {
 	if bg := m.runningJobCount(); bg > 0 {
 		status = fmt.Sprintf("%s, %d background", status, bg)
 	}
-	hint := " ↑/↓ select  enter run  t terminal  tab focus  / filter  q quit   [%s]"
+	hint := " ↑/↓ select  enter run  t terminal  tab focus  / filter  ? help  q quit   [%s]"
 	if m.focus == focusOutput && m.activeJob != nil {
-		hint = " ↑/↓ select  enter run  t terminal  tab focus  i input  / filter  q quit   [%s]"
+		hint = " ↑/↓ select  enter run  t terminal  tab focus  i input  / filter  ? help  q quit   [%s]"
 	}
 	return style.Render(fmt.Sprintf(hint, status))
+}
+
+func (m Model) renderHelp() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	key := lipgloss.NewStyle().Bold(true).Foreground(colorTextSoft).Width(18)
+	desc := lipgloss.NewStyle().Foreground(colorTextDim)
+
+	row := func(k, d string) string { return key.Render(k) + desc.Render(d) }
+
+	sections := []string{
+		title.Render("Commands list") + "\n" +
+			row("↑/↓, j/k", "move selection") + "\n" +
+			row("enter", "run the selected command") + "\n" +
+			row("t", "run it with a full terminal (vim, less, psql...)") + "\n" +
+			row("/", "filter by name") + "\n" +
+			row("tab", "switch focus between panels"),
+
+		title.Render("Output panel") + "\n" +
+			row("↑/↓, pgup/pgdn", "scroll (breaks follow-tail until you reach the bottom)") + "\n" +
+			row("i", "focus mode: send keys straight to the running process") + "\n" +
+			row("esc", "leave focus mode"),
+
+		title.Render("Params form / filter / prompts") + "\n" +
+			row("tab/shift+tab", "move between fields") + "\n" +
+			row("enter", "confirm a field, or submit the form on the last one") + "\n" +
+			row("esc", "cancel"),
+
+		title.Render("Global") + "\n" +
+			row("?", "toggle this help") + "\n" +
+			row("q, ctrl+c", "quit (kills any jobs still running in the background)"),
+	}
+
+	body := lipgloss.NewStyle().
+		Width(m.width-4).
+		Padding(1, 2).
+		Render(strings.Join(sections, "\n\n"))
+	return body + "\n" + lipgloss.NewStyle().Foreground(colorTextDim).Render(" press any key to close")
 }
