@@ -10,20 +10,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"lazycast/internal/config"
+	"lazycast/internal/jobs"
 )
 
-// fakeStreamLines simulates the output of a running command. Real job
-// output arrives over a PTY in a later build step.
-var fakeStreamLines = []string{
-	"Resolving dependencies...",
-	"Building...",
-	"[=====>          ] 34%",
-	"[==========>     ] 61%",
-	"[================] 100%",
-	"Done in 1.8s",
-}
-
-const streamTickInterval = 180 * time.Millisecond
+const pollInterval = 50 * time.Millisecond
 
 type focusZone int
 
@@ -44,25 +34,44 @@ type Model struct {
 	filterQuery string
 
 	warnings []string
+	stateDir string
 
 	viewport    viewport.Model
-	outputLines []string
-	running     bool
-	ready       bool
+	followTail  bool
+	activeJob   *jobs.Job
+	activeHdr   string // "$ name\n", prefixed to the job's buffer content
+	jobs        []*jobs.Job
+	lastVersion uint64
+	pollGen     int
+	jobSeq      int
+
+	ready bool
 }
 
 type flatRow struct {
 	isHeader bool
 	label    string
+	cmd      config.ResolvedCommand
 }
 
-func New(groups []config.Group, warnings []string) Model {
+func New(groups []config.Group, warnings []string, stateDir string) Model {
 	all := flattenGroups(groups)
 	return Model{
 		allRows:  all,
 		rows:     all,
 		cursor:   firstSelectable(all),
 		warnings: warnings,
+		stateDir: stateDir,
+	}
+}
+
+// Shutdown kills any jobs still running when the program exits, so a
+// background command (a dev server, a proxy) doesn't outlive the UI.
+func (m Model) Shutdown() {
+	for _, j := range m.jobs {
+		if status, _, _ := j.Snapshot(); status == jobs.StatusRunning {
+			j.Kill()
+		}
 	}
 }
 
@@ -71,7 +80,7 @@ func flattenGroups(groups []config.Group) []flatRow {
 	for _, g := range groups {
 		rows = append(rows, flatRow{isHeader: true, label: g.Title})
 		for _, c := range g.Commands {
-			rows = append(rows, flatRow{label: c.Name})
+			rows = append(rows, flatRow{label: c.Name, cmd: c})
 		}
 	}
 	return rows
@@ -121,16 +130,13 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// streamTickMsg advances the fake output by one line.
-type streamTickMsg struct {
-	cmdName string
-	n       int
-}
+// pollMsg carries the generation it was issued for, so a stale chain left
+// over from a job the user has since switched away from dies on its next
+// tick instead of polling forever alongside the current one.
+type pollMsg struct{ gen int }
 
-func nextStreamTick(cmdName string, n int) tea.Cmd {
-	return tea.Tick(streamTickInterval, func(time.Time) tea.Msg {
-		return streamTickMsg{cmdName: cmdName, n: n}
-	})
+func pollTick(gen int) tea.Cmd {
+	return tea.Tick(pollInterval, func(time.Time) tea.Msg { return pollMsg{gen: gen} })
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -147,20 +153,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateNormal(msg)
 
-	case streamTickMsg:
-		if msg.n >= len(fakeStreamLines) {
-			m.running = false
-			return m, nil
-		}
-		m.outputLines = append(m.outputLines, fakeStreamLines[msg.n])
-		m.viewport.SetContent(strings.Join(m.outputLines, "\n"))
-		m.viewport.GotoBottom()
-		return m, nextStreamTick(msg.cmdName, msg.n+1)
+	case pollMsg:
+		return m.updatePoll(msg)
 	}
 
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
+}
+
+func (m Model) updatePoll(msg pollMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.pollGen || m.activeJob == nil {
+		return m, nil
+	}
+
+	content, version := m.activeJob.Buffer.Snapshot()
+	status, exitCode, duration := m.activeJob.Snapshot()
+
+	if version != m.lastVersion {
+		m.lastVersion = version
+		body := m.activeHdr + content
+		if status != jobs.StatusRunning {
+			body += fmt.Sprintf("\n[%s, exit %d, %s]", status, exitCode, duration.Round(10*time.Millisecond))
+		}
+		m.viewport.SetContent(body)
+		if m.followTail {
+			m.viewport.GotoBottom()
+		}
+	}
+
+	if status == jobs.StatusRunning {
+		return m, pollTick(m.pollGen)
+	}
+	return m, nil
 }
 
 func (m Model) updateFiltering(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -205,27 +230,48 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = focusList
 		}
 		return m, nil
-	case "up", "k":
-		if m.focus == focusList {
-			m.moveCursor(-1)
-		}
-		return m, nil
-	case "down", "j":
-		if m.focus == focusList {
-			m.moveCursor(1)
-		}
-		return m, nil
 	case "enter":
 		if m.focus == focusList && m.cursor >= 0 && !m.rows[m.cursor].isHeader {
-			name := m.rows[m.cursor].label
-			m.running = true
-			m.outputLines = []string{"$ " + name}
-			m.viewport.SetContent(strings.Join(m.outputLines, "\n"))
-			return m, nextStreamTick(name, 0)
+			return m.runSelected()
 		}
 		return m, nil
 	}
-	return m, nil
+
+	if m.focus == focusList {
+		switch msg.String() {
+		case "up", "k":
+			m.moveCursor(-1)
+		case "down", "j":
+			m.moveCursor(1)
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	m.followTail = m.viewport.AtBottom()
+	return m, cmd
+}
+
+func (m Model) runSelected() (tea.Model, tea.Cmd) {
+	row := m.rows[m.cursor]
+	m.jobSeq++
+	id := fmt.Sprintf("%s-%d", row.cmd.Name, m.jobSeq)
+
+	job, err := jobs.Start(id, row.cmd, nil, m.stateDir)
+	if err != nil {
+		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", row.label, err))
+		return m, nil
+	}
+
+	m.jobs = append(m.jobs, job)
+	m.activeJob = job
+	m.activeHdr = "$ " + row.label + "\n"
+	m.lastVersion = 0
+	m.followTail = true
+	m.viewport.SetContent(m.activeHdr)
+	m.pollGen++
+	return m, pollTick(m.pollGen)
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -312,14 +358,35 @@ func (m Model) renderList() string {
 	return b.String()
 }
 
+// runningJobCount counts jobs still running other than the active one,
+// i.e. commands left going in the background.
+func (m Model) runningJobCount() int {
+	n := 0
+	for _, j := range m.jobs {
+		if j == m.activeJob {
+			continue
+		}
+		if status, _, _ := j.Snapshot(); status == jobs.StatusRunning {
+			n++
+		}
+	}
+	return n
+}
+
 func (m Model) renderKeyBar() string {
 	style := lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width)
 	if m.filtering {
 		return style.Render(" type to filter  enter confirm  esc clear")
 	}
+
 	status := "idle"
-	if m.running {
-		status = "running"
+	if m.activeJob != nil {
+		if s, _, _ := m.activeJob.Snapshot(); s == jobs.StatusRunning {
+			status = "running"
+		}
+	}
+	if bg := m.runningJobCount(); bg > 0 {
+		status = fmt.Sprintf("%s, %d background", status, bg)
 	}
 	return style.Render(fmt.Sprintf(" ↑/↓ select  enter run  tab focus  / filter  q quit   [%s]", status))
 }

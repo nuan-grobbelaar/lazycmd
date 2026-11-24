@@ -12,7 +12,12 @@ import (
 )
 
 func main() {
-	home, err := os.UserHomeDir()
+	globalDir, err := config.GlobalDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lazycast:", err)
+		os.Exit(1)
+	}
+	stateDir, err := config.StateDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazycast:", err)
 		os.Exit(1)
@@ -23,12 +28,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	globalDir := filepath.Join(home, ".config", "lazycast")
 	projectDir := filepath.Join(cwd, ".lazycast")
 	groups, warnings := config.Discover(globalDir, projectDir)
 
-	p := tea.NewProgram(ui.New(groups, warnings), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	p := tea.NewProgram(ui.New(groups, warnings, stateDir), tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if m, ok := finalModel.(ui.Model); ok {
+		m.Shutdown()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazycast:", err)
 		os.Exit(1)
 	}
