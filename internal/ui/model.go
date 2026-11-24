@@ -25,6 +25,17 @@ const (
 	focusOutput
 )
 
+// runMode picks how a selected command actually runs: through the
+// normal PTY-backed panel job, or by suspending the whole TUI and
+// handing the real terminal to the process directly - the fallback for
+// full-screen programs (vim, less, psql) that need one.
+type runMode int
+
+const (
+	runPanel runMode = iota
+	runTerminal
+)
+
 type Model struct {
 	width, height int
 	focus         focusZone
@@ -50,7 +61,8 @@ type Model struct {
 	pollGen     int
 	jobSeq      int
 
-	activeForm *paramsForm
+	activeForm     *paramsForm
+	pendingRunMode runMode // which way to run cmdSpec once an open params form completes
 
 	inputFocus bool // raw PTY focus mode: every key but esc goes to the job
 
@@ -192,6 +204,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pollMsg:
 		return m.updatePoll(msg)
+
+	case terminalExitedMsg:
+		text := "ran " + msg.name + " in a full terminal"
+		if msg.err != nil {
+			text += "\nerror: " + msg.err.Error()
+		}
+		m.viewport.SetContent(text)
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -212,10 +232,16 @@ func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case huh.StateCompleted:
 		cmdSpec := m.activeForm.cmd
 		values := m.activeForm.values()
+		mode := m.pendingRunMode
 		m.activeForm = nil
+		m.pendingRunMode = runPanel
+		if mode == runTerminal {
+			return m.runInTerminal(cmdSpec, values)
+		}
 		return m.startJob(cmdSpec, values)
 	case huh.StateAborted:
 		m.activeForm = nil
+		m.pendingRunMode = runPanel
 		return m, nil
 	}
 	return m, cmd
@@ -357,7 +383,12 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if m.focus == focusList && m.cursor >= 0 && !m.rows[m.cursor].isHeader {
-			return m.selectRow()
+			return m.selectRow(runPanel)
+		}
+		return m, nil
+	case "t":
+		if m.focus == focusList && m.cursor >= 0 && !m.rows[m.cursor].isHeader {
+			return m.selectRow(runTerminal)
 		}
 		return m, nil
 	case "i":
@@ -386,17 +417,44 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // selectRow runs the selected command directly if it takes no params,
-// or opens a params form first if it does.
-func (m Model) selectRow() (tea.Model, tea.Cmd) {
+// or opens a params form first if it does. mode picks whether the
+// eventual run goes through the normal panel job or hands the real
+// terminal to the process (for vim, less, psql - anything full-screen).
+func (m Model) selectRow(mode runMode) (tea.Model, tea.Cmd) {
 	cmdSpec := m.rows[m.cursor].cmd
 	if len(cmdSpec.Params) == 0 {
+		if mode == runTerminal {
+			return m.runInTerminal(cmdSpec, nil)
+		}
 		return m.startJob(cmdSpec, nil)
 	}
 
+	m.pendingRunMode = mode
 	_, outputWidth, bodyHeight := m.dims()
 	m.activeForm = newParamsForm(cmdSpec, m.projectRoot)
 	m.activeForm.form = m.activeForm.form.WithWidth(outputWidth - 2).WithHeight(bodyHeight - 2 - previewReserveLines)
 	return m, m.activeForm.form.Init()
+}
+
+// terminalExitedMsg reports back once a tea.ExecProcess run (the real
+// terminal was handed to the process directly) returns control.
+type terminalExitedMsg struct {
+	name string
+	err  error
+}
+
+func (m Model) runInTerminal(cmdSpec config.ResolvedCommand, values map[string]string) (tea.Model, tea.Cmd) {
+	m.usageLog.Record(m.projectRoot, cmdSpec.ID, time.Now())
+	_ = m.usageLog.Save(m.stateDir)
+
+	execCmd, err := jobs.BuildCmd(cmdSpec, values)
+	if err != nil {
+		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", cmdSpec.Name, err))
+		return m, nil
+	}
+	return m, tea.ExecProcess(execCmd, func(err error) tea.Msg {
+		return terminalExitedMsg{name: cmdSpec.Name, err: err}
+	})
 }
 
 func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string) (tea.Model, tea.Cmd) {
@@ -577,9 +635,9 @@ func (m Model) renderKeyBar() string {
 	if bg := m.runningJobCount(); bg > 0 {
 		status = fmt.Sprintf("%s, %d background", status, bg)
 	}
-	hint := " ↑/↓ select  enter run  tab focus  / filter  q quit   [%s]"
+	hint := " ↑/↓ select  enter run  t terminal  tab focus  / filter  q quit   [%s]"
 	if m.focus == focusOutput && m.activeJob != nil {
-		hint = " ↑/↓ select  enter run  tab focus  i input  / filter  q quit   [%s]"
+		hint = " ↑/↓ select  enter run  t terminal  tab focus  i input  / filter  q quit   [%s]"
 	}
 	return style.Render(fmt.Sprintf(hint, status))
 }

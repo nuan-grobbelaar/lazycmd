@@ -62,7 +62,7 @@ type Job struct {
 // substituted into a command line. Output is also teed to a log file
 // under stateDir/logs.
 func Start(id string, resolved config.ResolvedCommand, values map[string]string, stateDir string) (*Job, error) {
-	execCmd, err := buildExecCmd(resolved, values)
+	execCmd, err := BuildCmd(resolved, values)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,11 @@ func Start(id string, resolved config.ResolvedCommand, values map[string]string,
 	return j, nil
 }
 
-func buildExecCmd(resolved config.ResolvedCommand, values map[string]string) (*exec.Cmd, error) {
+// BuildCmd builds the *exec.Cmd for resolved with values injected as
+// LC_<NAME> env vars. Exported so a caller that needs the real terminal
+// directly (tea.ExecProcess, for a full-screen program like vim or
+// less) can build the same command without going through a PTY job.
+func BuildCmd(resolved config.ResolvedCommand, values map[string]string) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 	switch {
 	case resolved.ScriptPath != "":
