@@ -1,0 +1,50 @@
+package config
+
+// ParamType is the kind of value a param collects, which maps to a huh
+// field when the params form is built.
+type ParamType string
+
+const (
+	ParamString ParamType = "string"
+	ParamSelect ParamType = "select"
+	ParamMulti  ParamType = "multi"
+	ParamBool   ParamType = "bool"
+	ParamSecret ParamType = "secret"
+	ParamText   ParamType = "text"
+)
+
+// Mode controls whether a running command takes over the output panel or
+// keeps going in the background (e.g. a dev server or a proxy).
+type Mode string
+
+const (
+	ModePanel      Mode = "panel"
+	ModeBackground Mode = "background"
+)
+
+type Param struct {
+	Name       string    `yaml:"name"`
+	Type       ParamType `yaml:"type"`
+	Default    string    `yaml:"default,omitempty"`
+	Pattern    string    `yaml:"pattern,omitempty"`
+	Required   bool      `yaml:"required,omitempty"`
+	Options    []string  `yaml:"options,omitempty"`
+	OptionsCmd string    `yaml:"options_cmd,omitempty"`
+	DependsOn  []string  `yaml:"depends_on,omitempty"`
+}
+
+// Command is the one spec shape shared by commands.yaml entries and
+// sidecar files. A sidecar decodes directly into this struct; a
+// commands.yaml entry decodes into the value side of CommandsFile.Commands.
+type Command struct {
+	Desc   string  `yaml:"desc,omitempty"`
+	Mode   Mode    `yaml:"mode,omitempty"`
+	Params []Param `yaml:"params,omitempty"`
+	Run    string  `yaml:"run,omitempty"`
+	Script string  `yaml:"script,omitempty"`
+}
+
+// CommandsFile is the root shape of a project's commands.yaml.
+type CommandsFile struct {
+	Commands map[string]Command `yaml:"commands"`
+}
