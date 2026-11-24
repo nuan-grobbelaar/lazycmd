@@ -1,0 +1,234 @@
+package ui
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"lazycast/internal/config"
+	"lazycast/internal/jobs"
+)
+
+func testGroups() []config.Group {
+	return []config.Group{
+		{Title: "Global", Commands: []config.ResolvedCommand{
+			{ID: "global:alpha", Name: "alpha"},
+			{ID: "global:bravo", Name: "bravo"},
+		}},
+		{Title: "This project", Commands: []config.ResolvedCommand{
+			{ID: "project:charlie", Name: "charlie"},
+		}},
+	}
+}
+
+// ready returns a Model that's already been through its initial
+// WindowSizeMsg, same as a real program does on startup, so viewport
+// and layout-dependent state are initialized.
+func ready(t *testing.T, groups []config.Group, stateDir, projectRoot string) Model {
+	t.Helper()
+	m := New(groups, nil, stateDir, projectRoot)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	return updated.(Model)
+}
+
+func sendKey(t *testing.T, m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
+	t.Helper()
+	updated, cmd := m.Update(msg)
+	return updated.(Model), cmd
+}
+
+func rowLabels(m Model) []string {
+	labels := make([]string, len(m.rows))
+	for i, r := range m.rows {
+		labels[i] = r.label
+	}
+	return labels
+}
+
+func writeExecutable(t *testing.T, path, script string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewFlattensRowsWithHeaders(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	got := rowLabels(m)
+	want := []string{"Global", "alpha", "bravo", "This project", "charlie"}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("rows[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if m.cursor != 1 { // first non-header row
+		t.Errorf("cursor = %d, want 1 (alpha)", m.cursor)
+	}
+}
+
+func TestCursorMovementSkipsHeaders(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	// alpha(1) -> bravo(2) -> skip "This project"(3) -> charlie(4)
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.rows[m.cursor].label != "bravo" {
+		t.Fatalf("after one down, cursor on %q, want bravo", m.rows[m.cursor].label)
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.rows[m.cursor].label != "charlie" {
+		t.Fatalf("after two downs, cursor on %q, want charlie (header skipped)", m.rows[m.cursor].label)
+	}
+	// one more down: already at the last row, should not move
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if m.rows[m.cursor].label != "charlie" {
+		t.Errorf("cursor moved past the last row to %q", m.rows[m.cursor].label)
+	}
+}
+
+func TestFilterNarrowsRowsAndKeepsOnlyMatchingHeaders(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !m.filtering {
+		t.Fatal("expected filtering to be active after /")
+	}
+	for _, r := range "charlie" {
+		m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	got := rowLabels(m)
+	want := []string{"This project", "charlie"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("filtered rows = %v, want %v (Global header dropped, no match left under it)", got, want)
+	}
+}
+
+func TestFilterBackspaceAndEsc(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.filterQuery != "" {
+		t.Errorf("filterQuery = %q after backspace, want empty", m.filterQuery)
+	}
+	if len(m.rows) != len(m.allRows) {
+		t.Errorf("rows should be back to all %d after clearing query, got %d", len(m.allRows), len(m.rows))
+	}
+
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("bravo")})
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // confirm: stop editing, keep filter
+	if m.filtering {
+		t.Error("enter should stop editing the filter")
+	}
+	if m.filterQuery != "bravo" {
+		t.Errorf("filterQuery = %q after enter, want kept as bravo", m.filterQuery)
+	}
+
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc}) // now from normal mode: clears
+	if m.filterQuery != "" {
+		t.Errorf("filterQuery = %q after esc from normal mode, want cleared", m.filterQuery)
+	}
+}
+
+func TestHelpOverlayTogglesAndAnyKeyDismisses(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if !m.helpActive {
+		t.Fatal("expected helpActive after ?")
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")}) // any key closes it
+	if m.helpActive {
+		t.Error("expected helpActive to clear on any key")
+	}
+}
+
+func TestQuitKeysReturnTeaQuit(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	for _, key := range []string{"q", "ctrl+c"} {
+		var msg tea.KeyMsg
+		if key == "ctrl+c" {
+			msg = tea.KeyMsg{Type: tea.KeyCtrlC}
+		} else {
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		}
+		_, cmd := sendKey(t, m, msg)
+		if cmd == nil {
+			t.Fatalf("%s: expected a cmd, got nil", key)
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Errorf("%s: cmd produced %T, want tea.QuitMsg", key, cmd())
+		}
+	}
+}
+
+func TestSelectRowWithNoParamsStartsARealJob(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "hi.sh"), "#!/bin/sh\necho hi\n")
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:hi", Name: "hi", ScriptPath: filepath.Join(root, "hi.sh")},
+	}}}
+
+	m := ready(t, groups, t.TempDir(), root)
+	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeJob == nil {
+		t.Fatal("expected activeJob to be set")
+	}
+	t.Cleanup(func() { m.activeJob.Kill() })
+	if cmd == nil {
+		t.Fatal("expected a poll tick cmd to be returned")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status, _, _ := m.activeJob.Snapshot(); status != jobs.StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	content, _ := m.activeJob.Buffer.Snapshot()
+	if content != "hi\n" {
+		t.Errorf("job output = %q, want %q", content, "hi\n")
+	}
+}
+
+func TestSelectRowWithParamsOpensFormInsteadOfRunning(t *testing.T) {
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:greet", Name: "greet", Run: "echo hi", Params: []config.Param{
+			{Name: "who", Type: config.ParamString},
+		}},
+	}}}
+	m := ready(t, groups, t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("expected a params form to open")
+	}
+	if m.activeJob != nil {
+		t.Error("expected no job to have started yet")
+	}
+}
+
+func TestEscAbortsOpenForm(t *testing.T) {
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:greet", Name: "greet", Run: "echo hi", Params: []config.Param{
+			{Name: "who", Type: config.ParamString},
+		}},
+	}}}
+	m := ready(t, groups, t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("expected a params form to open")
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.activeForm != nil {
+		t.Error("expected esc to abort the form")
+	}
+	if m.activeJob != nil {
+		t.Error("expected no job to have started after abort")
+	}
+}
