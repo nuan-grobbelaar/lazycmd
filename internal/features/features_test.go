@@ -216,6 +216,47 @@ func TestGitDetect(t *testing.T) {
 	}
 }
 
+func TestGitCommands(t *testing.T) {
+	ns := names(t, Git{}, t.TempDir(), nil)
+	for _, want := range []string{"git: fetch --prune", "git: pull", "git: push", "git: stash", "git: stash pop", "git: worktree list"} {
+		if !contains(ns, want) {
+			t.Errorf("missing %q in %v", want, ns)
+		}
+	}
+}
+
+func TestMavenDetectWithoutPomXML(t *testing.T) {
+	if ok, _ := (Maven{}).Detect(t.TempDir()); ok {
+		t.Error("Detect = true with no pom.xml")
+	}
+}
+
+func TestViteDetectWithoutConfig(t *testing.T) {
+	if ok, _ := (Vite{}).Detect(t.TempDir()); ok {
+		t.Error("Detect = true with no vite.config.*")
+	}
+}
+
+func TestPackageManagerPicksByLockfile(t *testing.T) {
+	cases := []struct {
+		lockfile string
+		want     string
+	}{
+		{"yarn.lock", "yarn"},
+		{"bun.lockb", "bun"},
+		{"package-lock.json", "npm"}, // not specially detected; npm is the default
+	}
+	for _, c := range cases {
+		root := t.TempDir()
+		if c.lockfile != "package-lock.json" {
+			writeFile(t, filepath.Join(root, c.lockfile), "")
+		}
+		if got := packageManager(root); got != c.want {
+			t.Errorf("lockfile %s: packageManager = %q, want %q", c.lockfile, got, c.want)
+		}
+	}
+}
+
 func TestDiscoverSkipsDisabledAndUndetected(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "pom.xml"), `<project></project>`)
