@@ -179,19 +179,19 @@ func TestSelectRowWithNoParamsStartsARealJob(t *testing.T) {
 	if m.activeJob == nil {
 		t.Fatal("expected activeJob to be set")
 	}
-	t.Cleanup(func() { m.activeJob.Kill() })
+	t.Cleanup(func() { m.activeJob.job.Kill() })
 	if cmd == nil {
 		t.Fatal("expected a poll tick cmd to be returned")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if status, _, _ := m.activeJob.Snapshot(); status != jobs.StatusRunning {
+		if status, _, _ := m.activeJob.job.Snapshot(); status != jobs.StatusRunning {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	content, _ := m.activeJob.Buffer.Snapshot()
+	content, _ := m.activeJob.job.Buffer.Snapshot()
 	if content != "hi\n" {
 		t.Errorf("job output = %q, want %q", content, "hi\n")
 	}
