@@ -68,6 +68,7 @@ func main() {
 		// commands too; defaults after params, so they win.
 		if profile != nil {
 			w = append(w, config.ApplyParamOverrides(groups, profile.File.Params)...)
+			w = append(w, config.ApplyTerminal(groups, profile.File.Terminal)...)
 			w = append(w, config.ApplyDefaults(groups, profile.File.Defaults)...)
 		}
 		return groups, w

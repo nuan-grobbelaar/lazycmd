@@ -5,7 +5,7 @@ Next steps after v0.1.3. Each milestone is its own branch and release: tests, RE
 | Milestone | Release | Contents | Size |
 |---|---|---|---|
 | 1 | v0.1.4 ✓ | `options_cmd` errors shown; param names validated | small |
-| 2 | v0.1.5 | `terminal: true`; panel PTY sized; run last | medium |
+| 2 | v0.1.5 ✓ | `terminal: true`; panel PTY sized; run last | medium |
 | 3 | v0.2.0 | `confirm:` popup; `lazycmd ask` / `lazycmd pick` | large |
 | 4 | v0.2.1 | docker compose and Python features | medium |
 | 5 | v0.3.0 | config reloads by itself; search in output | medium |
@@ -33,7 +33,7 @@ Today a failing or slow `options_cmd` just leaves the list empty ([paramsform.go
 
 ---
 
-## Milestone 2 (v0.1.5): terminal and run last
+## Milestone 2 (v0.1.5): terminal and run last ✓ done
 
 ### `terminal: true`
 

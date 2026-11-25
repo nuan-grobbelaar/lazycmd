@@ -62,12 +62,27 @@ type Job struct {
 // substituted into a command line. Output is also teed to a log file
 // under stateDir/logs.
 func Start(id string, resolved config.ResolvedCommand, values map[string]string, stateDir string) (*Job, error) {
+	return StartSized(id, resolved, values, stateDir, 0, 0)
+}
+
+// StartSized is Start with the PTY given a size up front, so a program
+// that formats to its terminal's width (or checks it has one) sees the
+// output panel's real size rather than 0x0. Zero means unsized. Panel
+// jobs also get LC_PANEL=1, so a script can tell it isn't in a real
+// terminal and choose a simpler mode.
+func StartSized(id string, resolved config.ResolvedCommand, values map[string]string, stateDir string, cols, rows int) (*Job, error) {
 	execCmd, err := BuildCmd(resolved, values)
 	if err != nil {
 		return nil, err
 	}
+	execCmd.Env = append(execCmd.Env, "LC_PANEL=1")
 
-	ptmx, err := pty.Start(execCmd)
+	var ptmx *os.File
+	if ws := winsize(cols, rows); ws != nil {
+		ptmx, err = pty.StartWithSize(execCmd, ws)
+	} else {
+		ptmx, err = pty.Start(execCmd)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +227,27 @@ func (j *Job) Kill() {
 	if j.cmd.Process != nil {
 		_ = j.cmd.Process.Kill()
 	}
+}
+
+// Resize tells the job's PTY its new size, which also sends the program
+// SIGWINCH so it can redraw. A no-op once the job has finished.
+func (j *Job) Resize(cols, rows int) {
+	ws := winsize(cols, rows)
+	if ws == nil {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.closed {
+		_ = pty.Setsize(j.ptmx, ws)
+	}
+}
+
+func winsize(cols, rows int) *pty.Winsize {
+	if cols <= 0 || rows <= 0 || cols > 0xffff || rows > 0xffff {
+		return nil
+	}
+	return &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}
 }
 
 // Write sends keystrokes to the job's PTY, i.e. to the running

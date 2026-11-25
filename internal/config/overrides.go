@@ -131,3 +131,31 @@ func notAnOption(p Param, val string) string {
 	}
 	return ""
 }
+
+// ApplyTerminal marks the commands a profile's terminal: list names (by
+// display name or id, as in defaults:) to run with the real terminal on
+// enter. A name that matches nothing is a warning.
+func ApplyTerminal(groups []Group, names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	used := map[string]bool{}
+	for gi := range groups {
+		for ci := range groups[gi].Commands {
+			cmd := &groups[gi].Commands[ci]
+			for _, n := range names {
+				if n == cmd.Name || n == cmd.ID {
+					cmd.Terminal = true
+					used[n] = true
+				}
+			}
+		}
+	}
+	var warnings []string
+	for _, n := range names {
+		if !used[n] {
+			warnings = append(warnings, fmt.Sprintf("terminal: no command named %q", n))
+		}
+	}
+	return warnings
+}

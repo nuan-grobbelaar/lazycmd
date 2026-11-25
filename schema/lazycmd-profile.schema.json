@@ -8,6 +8,11 @@
   "properties": {
     "path": { "type": "string", "description": "Repo this profile is for. ~ is expanded; a relative path is relative to this file." },
     "paths": { "type": "array", "items": { "type": "string" }, "description": "Several repos sharing one profile." },
+    "terminal": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Commands (by name or id, as in defaults) that run with the real terminal on enter in this repo, like terminal: true in a command's own file."
+    },
     "include": {
       "type": "array",
       "description": "Commands to add to 'This project'. Each entry is a script (its <name>.lazycmd.yaml sidecar beside it is picked up), a <name>.lazycmd.yaml sidecar (its script sits beside it, or the sidecar sets run:/script:), a commands.yaml-shaped file, or a folder of scripts. ~ is expanded; relative paths are relative to this file. The repo's own .lazycmd/ wins on a name clash.",

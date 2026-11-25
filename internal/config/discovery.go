@@ -23,6 +23,7 @@ type ResolvedCommand struct {
 	Run        string
 	ScriptPath string
 	Args       []string // script arguments, with {param} placeholders; see args.go
+	Terminal   bool     // enter runs it with the real terminal, like t
 
 	// Shadows is the path of the global script this project command
 	// hides because it has the same name; empty when it hides nothing.
@@ -228,4 +229,5 @@ func applySpec(cmd *ResolvedCommand, spec Command) {
 	cmd.Params = spec.Params
 	cmd.Run = spec.Run
 	cmd.Args = spec.Args
+	cmd.Terminal = spec.Terminal
 }

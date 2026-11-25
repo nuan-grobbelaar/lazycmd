@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,5 +138,37 @@ params:
 	writeFile(t, filepath.Join(ProfilesDir(global), "p.yaml"), "path: "+repo+"\nparams:\n  x:\n    y: { optons: [a] }\n")
 	if prof, w := LoadProfile(global, repo); prof != nil || len(w) != 1 {
 		t.Errorf("typo key: profile = %v, warnings = %v, want rejected", prof, w)
+	}
+}
+
+func TestTerminalFromSpecAndProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "pick.sh"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(dir, "pick.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "pick.lazycmd.yaml"), "terminal: true\n")
+	cmds, w := scanScripts(dir, "global", nil)
+	if len(w) != 0 || len(cmds) != 1 || !cmds[0].Terminal {
+		t.Fatalf("sidecar terminal: cmds = %+v, warnings = %v", cmds, w)
+	}
+
+	groups := []Group{{Commands: []ResolvedCommand{
+		{ID: "global:a", Name: "a"}, {ID: "maven:test", Name: "maven: test"}, {ID: "global:b", Name: "b"},
+	}}}
+	w = ApplyTerminal(groups, []string{"a", "maven:test", "ghost"})
+	got := groups[0].Commands
+	if !got[0].Terminal || !got[1].Terminal || got[2].Terminal {
+		t.Errorf("terminal = %v %v %v", got[0].Terminal, got[1].Terminal, got[2].Terminal)
+	}
+	if len(w) != 1 || !strings.Contains(w[0], `"ghost"`) {
+		t.Errorf("warnings = %v", w)
+	}
+
+	global, repo := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(ProfilesDir(global), "p.yaml"), "path: "+repo+"\nterminal:\n  - pick\n")
+	prof, w := LoadProfile(global, repo)
+	if prof == nil || len(w) != 0 || len(prof.File.Terminal) != 1 || prof.File.Terminal[0] != "pick" {
+		t.Errorf("profile terminal = %+v, warnings %v", prof, w)
 	}
 }

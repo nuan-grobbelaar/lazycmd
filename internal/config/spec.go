@@ -39,6 +39,9 @@ type Command struct {
 	// replaced by the param's value. Needs script (or an adjacent script
 	// for a sidecar); see args.go.
 	Args []string `yaml:"args,omitempty"`
+	// Terminal runs the command with the real terminal on enter, the
+	// way t does, for interactive programs (fzf, vim, psql).
+	Terminal bool `yaml:"terminal,omitempty"`
 }
 
 // CommandsFile is the root shape of a project's commands.yaml.

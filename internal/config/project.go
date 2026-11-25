@@ -23,6 +23,7 @@ import (
 //	defaults:                     # preselected values in param forms
 //	  deploy-staging: { env: staging }
 //	  "maven: test": { module: api }
+//	terminal: [pick-repo]         # commands to run with the real terminal on enter
 //	params:                       # this repo's choices for select/multi params
 //	  echo-params: { features: { options: [a, b], default: [a] } }
 //	disable: [git]                # plus features:/maven:/npm:/... as in config.yaml
@@ -32,6 +33,7 @@ type ProfileFile struct {
 	Include      []string                            `yaml:"include,omitempty"`
 	Defaults     map[string]map[string]any           `yaml:"defaults,omitempty"`
 	Params       map[string]map[string]ParamOverride `yaml:"params,omitempty"`
+	Terminal     []string                            `yaml:"terminal,omitempty"`
 	FeaturesFile `yaml:",inline"`
 }
 

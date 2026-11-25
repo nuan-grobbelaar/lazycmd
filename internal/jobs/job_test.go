@@ -299,3 +299,43 @@ func TestStartKeepsLogInsideLogsDir(t *testing.T) {
 		t.Fatalf("logs folder = %v, want exactly one file", entries)
 	}
 }
+
+func TestStartSizedAndResize(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "size.sh")
+	writeExecutable(t, script, "#!/bin/sh\nstty size\necho \"panel=$LC_PANEL\"\nread x\nstty size\n")
+
+	j, err := StartSized("size", config.ResolvedCommand{Name: "size", ScriptPath: script}, nil, t.TempDir(), 80, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return strings.Contains(bufText(j), "panel=1") })
+	if !strings.Contains(bufText(j), "20 80") {
+		t.Fatalf("output = %q, want the PTY to start at 20 rows x 80 cols", bufText(j))
+	}
+
+	j.Resize(100, 30)
+	if _, err := j.Write([]byte("\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return strings.Contains(bufText(j), "30 100") })
+	waitFor(t, func() bool { s, _, _ := j.Snapshot(); return s != StatusRunning })
+	j.Resize(10, 10) // after exit: a no-op, not a panic
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition never held")
+}
+
+func bufText(j *Job) string {
+	s, _ := j.Buffer.Snapshot()
+	return s
+}

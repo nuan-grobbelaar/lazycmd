@@ -32,7 +32,9 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 |---|---|---|
 | `↑`/`↓`, `j`/`k` | Commands, Jobs | move the selection |
 | `enter` | Commands | run the selected command (opens its form first if it has params) |
-| `t` | Commands | run it with the real terminal, for full-screen programs (vim, less, psql) |
+| `t` | Commands | run it with the real terminal, for full-screen programs (vim, less, psql). A command with `terminal: true` (marked `⧉`) does this on `enter` |
+| `.` | Commands | run the **last command run in this repo** again, with the same answers (like a shell's `!!`) |
+| `R` | Commands | run the **selected** command with the answers you last gave it in this repo |
 | `/` | Commands | filter by name (`enter` keeps it, `esc` clears it) |
 | `enter` | Jobs | show that job in the Output panel |
 | `x` | Jobs | stop the job |
@@ -44,6 +46,14 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 | `alt+1` / `alt+2` / `alt+3` | anywhere | jump to Commands / Jobs / Output |
 | `?` | anywhere | help |
 | `q`, `ctrl+c` | anywhere | quit (kills jobs still running) |
+
+**Running something again.** `enter` always opens a command's form with its **defaults**. `.` and `R` use the answers you **actually gave** last time in this repo instead, and skip the form:
+- They go through the same checks as `enter`: the [trust prompt](#allowing-a-repos-commands), the shadowing warning, and `terminal: true`. A command that isn't listed (e.g. not allowed yet) can't be re-run.
+- **Secrets are never saved.** For a command with a `secret` param, the form opens filled in with your other answers, and you enter the secret.
+- If an old answer no longer fits (an option is gone, a param was added, a value fails its `pattern`), the form opens filled in with the old answers and says what changed.
+- The key bar shows the last command, e.g. `. deploy (12m ago)`.
+
+**The output panel is not a real terminal.** Panel jobs run on a pseudo-terminal sized to the Output panel, resized along with the window, so tools that format to the width behave. They also get `LC_PANEL=1`, so a script can tell it's in the panel and use a simpler mode. Interactive full-screen programs (fzf, vim, `docker compose exec`) need `t` or `terminal: true`.
 
 On macOS, option+1/2/3 types `¡ ™ £` unless your terminal treats Option as Meta; both work.
 
@@ -101,6 +111,7 @@ Allowed repos are kept in `~/.local/state/lazycmd/trust.json` (readable only by 
 
 ~/.local/state/lazycmd/
   usage.json                        # usage counts
+  last.json                         # your last answers per command, for . and R
   trust.json                        # repos whose commands you allowed
   logs/                             # one log file per run
 ```
@@ -118,6 +129,7 @@ One shape is used everywhere: sidecars, `commands.yaml` entries and files a prof
 | `run` | string | inline shell body, run with `sh -c` |
 | `script` | string | path to a script (relative to the file that names it) |
 | `args` | list of strings | arguments for the script, see [below](#passing-params-to-a-command) |
+| `terminal` | bool | `enter` runs it with the real terminal, like `t`, for interactive programs (fzf, vim, psql). Shown as `⧉` in the list |
 
 In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it.
 
@@ -318,6 +330,7 @@ maven:
 |---|---|
 | `path` / `paths` | the repo(s) this profile is for. `~` is expanded; a relative path is relative to the profile file. Matches the repo itself **or any folder below it** |
 | `include` | extra commands for "This project" |
+| `terminal` | list of commands (name or id, like `defaults`) that run with the real terminal on `enter` in this repo, e.g. a global script's sidecar that doesn't set it |
 | `defaults` | preselected form values |
 | `params` | this repo's options and default for a `select` / `multi` param |
 | `features`, `disable`, `maven`, … | exactly as in [config.yaml](#configyaml-features-and-settings) |
@@ -343,6 +356,7 @@ maven:
 
 - `~/.local/state/lazycmd/logs/<job>.log` holds each run's output (as the program wrote it).
 - `~/.local/state/lazycmd/trust.json` holds the repos whose commands you allowed, see [above](#allowing-a-repos-commands).
+- `~/.local/state/lazycmd/last.json` (readable only by you) holds, per repo, the answers you last gave each command and which command ran last, for `.` and `R`. Secret params are never saved. Delete it to forget them.
 - `~/.local/state/lazycmd/usage.json` holds decayed run counts per repo and command id. It only orders the Global group; delete it to reset. A missing or corrupt file just starts fresh.
 
 ## Editor support: JSON Schemas

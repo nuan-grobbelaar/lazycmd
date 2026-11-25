@@ -16,6 +16,7 @@ import (
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
+	"lazycmd/internal/last"
 	"lazycmd/internal/safetext"
 	"lazycmd/internal/trust"
 	"lazycmd/internal/usage"
@@ -58,6 +59,11 @@ type Model struct {
 	projectRoot string
 	profileName string // matched central project profile, shown in the header
 	usageLog    *usage.Log
+	lastStore   *last.Store // last answers per repo and command, for . and R
+
+	// flash is a one-line message in the key bar, cleared by the next
+	// key: what . or R couldn't do.
+	flash string
 
 	viewport    viewport.Model
 	followTail  bool
@@ -110,6 +116,7 @@ func New(groups []config.Group, warnings []string, stateDir, projectRoot string)
 		stateDir:    stateDir,
 		projectRoot: projectRoot,
 		usageLog:    usage.Load(stateDir),
+		lastStore:   last.Load(stateDir),
 		shadowAcked: map[string]bool{},
 	}
 	m.setGroups(groups)
@@ -624,6 +631,7 @@ func (m Model) updatePromptPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.flash = ""
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -713,8 +721,55 @@ func (m Model) updateListFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && !m.rows[m.cursor].isHeader {
 			return m.selectRow(runPanel)
 		}
+	case ".":
+		return m.runLastHere()
+	case "R":
+		if m.cursor >= 0 && !m.rows[m.cursor].isHeader {
+			return m.rerunSelected()
+		}
 	}
 	return m, nil
+}
+
+// runLastHere runs the last command run in this repo again, with the
+// answers it was given (".", like a shell's !!).
+func (m Model) runLastHere() (tea.Model, tea.Cmd) {
+	id, entry, ok := m.lastStore.Last(m.projectRoot)
+	if !ok {
+		m.flash = "nothing run in this repo yet"
+		return m, nil
+	}
+	cmdSpec, found := m.commandByID(id)
+	if !found {
+		m.flash = "the last command (" + safetext.Line(id) + ") isn't available here"
+		return m, nil
+	}
+	return m.selectCommand(cmdSpec, runPanel, &entry)
+}
+
+// rerunSelected runs the selected command with the answers last given
+// to it in this repo ("R"). With none stored it's a normal run.
+func (m Model) rerunSelected() (tea.Model, tea.Cmd) {
+	cmdSpec := m.rows[m.cursor].cmd
+	entry, ok := m.lastStore.Get(m.projectRoot, cmdSpec.ID)
+	if !ok {
+		if len(cmdSpec.Params) > 0 {
+			m.flash = "no earlier answers for " + cmdSpec.Name + ": starting from the defaults"
+		}
+		return m.selectCommand(cmdSpec, runPanel, nil)
+	}
+	return m.selectCommand(cmdSpec, runPanel, &entry)
+}
+
+// commandByID finds a listed command. Hidden commands (a repo's own,
+// before they're allowed) aren't listed, so they can't be re-run.
+func (m Model) commandByID(id string) (config.ResolvedCommand, bool) {
+	for _, r := range m.allRows {
+		if !r.isHeader && r.cmd.ID == id && id != trustReviewID {
+			return r.cmd, true
+		}
+	}
+	return config.ResolvedCommand{}, false
 }
 
 // updateJobsFocus drives the jobs panel: switch which job's output is
@@ -752,18 +807,27 @@ func (m Model) updateJobsFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // eventual run goes through the normal panel job or hands the real
 // terminal to the process (for vim, less, psql - anything full-screen).
 func (m Model) selectRow(mode runMode) (tea.Model, tea.Cmd) {
-	cmdSpec := m.rows[m.cursor].cmd
+	return m.selectCommand(m.rows[m.cursor].cmd, mode, nil)
+}
+
+// selectCommand is selectRow for any command. prev, when set, holds the
+// answers to run it with again (. and R); the same checks apply either
+// way.
+func (m Model) selectCommand(cmdSpec config.ResolvedCommand, mode runMode, prev *last.Entry) (tea.Model, tea.Cmd) {
 	if cmdSpec.ID == trustReviewID {
 		m.trustPromptOpen = true
 		return m, nil
 	}
+	if cmdSpec.Terminal {
+		mode = runTerminal // enter on a terminal: true command acts like t
+	}
 	if m.needsShadowConfirm(cmdSpec) {
 		// Asked before the form opens, so nothing of the project's runs
 		// (not even an options_cmd) until the user has said yes.
-		m.shadowConfirm = &shadowConfirm{cmd: cmdSpec, mode: mode}
+		m.shadowConfirm = &shadowConfirm{cmd: cmdSpec, mode: mode, prev: prev}
 		return m, nil
 	}
-	return m.openOrRun(cmdSpec, mode)
+	return m.openOrRunWith(cmdSpec, mode, prev)
 }
 
 // shadowConfirm is the pending first-run warning for cmd, a project
@@ -771,6 +835,7 @@ func (m Model) selectRow(mode runMode) (tea.Model, tea.Cmd) {
 type shadowConfirm struct {
 	cmd  config.ResolvedCommand
 	mode runMode
+	prev *last.Entry // answers to re-run with, when it came from . or R
 }
 
 // needsShadowConfirm is true for a project command that hides a global
@@ -792,7 +857,7 @@ func (m Model) updateShadowConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.shadowAcked = map[string]bool{}
 		}
 		m.shadowAcked[sc.cmd.ID] = true
-		return m.openOrRun(sc.cmd, sc.mode)
+		return m.openOrRunWith(sc.cmd, sc.mode, sc.prev)
 	case "ctrl+c":
 		return m, tea.Quit
 	case "n", "N", "esc", "q", "enter":
@@ -804,18 +869,108 @@ func (m Model) updateShadowConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // openOrRun runs cmdSpec directly if it takes no params, or opens its
 // params form first.
 func (m Model) openOrRun(cmdSpec config.ResolvedCommand, mode runMode) (tea.Model, tea.Cmd) {
+	return m.openOrRunWith(cmdSpec, mode, nil)
+}
+
+// openOrRunWith is openOrRun with earlier answers. If they still fit the
+// command they're used as is, without a form. If not (a secret to enter,
+// a param added since, an option gone) the form opens filled in with
+// them, saying why.
+func (m Model) openOrRunWith(cmdSpec config.ResolvedCommand, mode runMode, prev *last.Entry) (tea.Model, tea.Cmd) {
 	if len(cmdSpec.Params) == 0 {
 		if mode == runTerminal {
 			return m.runInTerminal(cmdSpec, nil)
 		}
 		return m.startJob(cmdSpec, nil)
 	}
+	notice := ""
+	if prev != nil {
+		why := rerunBlocker(cmdSpec, prev.Values)
+		if why == "" {
+			values := map[string]string{}
+			for _, p := range cmdSpec.Params {
+				values[p.Name] = prev.Values[p.Name]
+			}
+			if mode == runTerminal {
+				return m.runInTerminal(cmdSpec, values)
+			}
+			return m.startJob(cmdSpec, values)
+		}
+		cmdSpec = withDefaults(cmdSpec, prev.Values)
+		notice = "filled in with your last answers; " + why
+	}
 
 	m.pendingRunMode = mode
 	w, h := m.formDims()
 	m.activeForm = newParamsForm(cmdSpec, m.projectRoot)
+	m.activeForm.notice = notice
 	m.activeForm.form = m.activeForm.form.WithWidth(w - 2).WithHeight(m.formFieldsHeight(h))
 	return m, m.activeForm.form.Init()
+}
+
+// rerunBlocker says why earlier answers can't be used as they are, or ""
+// when they can. Secrets are never stored, so a command with one always
+// needs the form. Options from options_cmd can't be checked without
+// running it, so those answers are trusted.
+func rerunBlocker(c config.ResolvedCommand, values map[string]string) string {
+	for _, p := range c.Params {
+		name := safetext.Line(p.Name)
+		if p.Type == config.ParamSecret {
+			return "secrets aren't saved, so enter " + name
+		}
+		v, ok := values[p.Name]
+		if !ok {
+			return name + " is new since last time"
+		}
+		switch p.Type {
+		case config.ParamSelect:
+			if p.OptionsCmd == "" && len(p.Options) > 0 && !p.Options.Has(v) {
+				return fmt.Sprintf("%q isn't an option for %s any more", safetext.Line(v), name)
+			}
+		case config.ParamMulti:
+			if p.OptionsCmd == "" && len(p.Options) > 0 {
+				for _, part := range strings.Split(v, ",") {
+					if part = strings.TrimSpace(part); part != "" && !p.Options.Has(part) {
+						return fmt.Sprintf("%q isn't an option for %s any more", safetext.Line(part), name)
+					}
+				}
+			}
+		case config.ParamBool:
+			if v != "true" && v != "false" {
+				return name + " needs a yes or no"
+			}
+		case config.ParamString, "":
+			if err := stringValidator(p)(v); err != nil {
+				return err.Error()
+			}
+		}
+	}
+	return ""
+}
+
+// withDefaults returns c with its params' defaults set to the given
+// answers, for a form filled in with them. Secrets stay empty.
+func withDefaults(c config.ResolvedCommand, values map[string]string) config.ResolvedCommand {
+	c.Params = append([]config.Param(nil), c.Params...)
+	for i := range c.Params {
+		if v, ok := values[c.Params[i].Name]; ok && c.Params[i].Type != config.ParamSecret {
+			c.Params[i].Default = v
+		}
+	}
+	return c
+}
+
+// recordLast stores values as cmdSpec's last answers here, leaving out
+// secrets. Best effort: a failed save only costs "run last" an entry.
+func (m Model) recordLast(cmdSpec config.ResolvedCommand, values map[string]string) {
+	var secrets []string
+	for _, p := range cmdSpec.Params {
+		if p.Type == config.ParamSecret {
+			secrets = append(secrets, p.Name)
+		}
+	}
+	m.lastStore.Record(m.projectRoot, cmdSpec.ID, values, secrets, time.Now())
+	_ = m.lastStore.Save(m.stateDir)
 }
 
 // terminalExitedMsg reports back once a tea.ExecProcess run (the real
@@ -828,6 +983,7 @@ type terminalExitedMsg struct {
 func (m Model) runInTerminal(cmdSpec config.ResolvedCommand, values map[string]string) (tea.Model, tea.Cmd) {
 	m.usageLog.Record(m.projectRoot, cmdSpec.ID, time.Now())
 	_ = m.usageLog.Save(m.stateDir)
+	m.recordLast(cmdSpec, values)
 
 	execCmd, err := jobs.BuildCmd(cmdSpec, values)
 	if err != nil {
@@ -843,6 +999,7 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 	now := time.Now()
 	m.usageLog.Record(m.projectRoot, cmdSpec.ID, now)
 	_ = m.usageLog.Save(m.stateDir) // best effort; a dropped usage tick isn't worth surfacing
+	m.recordLast(cmdSpec, values)
 
 	m.jobSeq++
 	id := fmt.Sprintf("%s-%d", cmdSpec.Name, m.jobSeq)
@@ -856,7 +1013,7 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 		}
 	}
 
-	job, err := jobs.Start(id, cmdSpec, values, m.stateDir)
+	job, err := jobs.StartSized(id, cmdSpec, values, m.stateDir, m.viewport.Width, m.viewport.Height)
 	if err != nil {
 		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", cmdSpec.Name, err))
 		return m, nil
@@ -967,6 +1124,10 @@ func (m *Model) layout() {
 	followed := m.followTail
 	m.viewport = viewport.New(outputWidth-2, max(1, bodyHeight-2-outputFooterHeight))
 	m.viewport.SetContent(m.activeJobBody())
+	// Running jobs get the new size too, and SIGWINCH with it.
+	for _, tj := range m.jobs {
+		tj.job.Resize(m.viewport.Width, m.viewport.Height)
+	}
 	// viewport.New always starts at the top; a resize shouldn't silently
 	// stop following a job that was still being followed.
 	if followed {
@@ -1238,13 +1399,18 @@ func isWarnRow(c config.ResolvedCommand) bool {
 
 // rowMeta is the dim right-aligned annotation on a command row.
 func rowMeta(c config.ResolvedCommand) string {
+	var meta string
 	switch {
 	case len(c.Params) == 1:
-		return "1 param"
+		meta = "1 param"
 	case len(c.Params) > 1:
-		return fmt.Sprintf("%d params", len(c.Params))
+		meta = fmt.Sprintf("%d params", len(c.Params))
 	}
-	return ""
+	if c.Terminal {
+		// Runs with the real terminal on enter.
+		meta = strings.TrimSpace(meta + " ⧉")
+	}
+	return meta
 }
 
 func (m Model) renderList(width int) string {
@@ -1405,7 +1571,34 @@ func (m Model) keyBarText() string {
 	case m.focus == focusJobs:
 		return keyBar("↑/↓", "select", "enter", "view", "x", "stop", "r", "restart", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	}
-	return keyBar("enter", "run", "t", "terminal", "/", "filter", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
+	enterDesc := "run"
+	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].cmd.Terminal {
+		enterDesc = "run in terminal"
+	}
+	if m.flash != "" {
+		return lipgloss.NewStyle().Foreground(colorAmber).Render(" " + m.flash)
+	}
+	pairs := []string{"enter", enterDesc, "t", "terminal"}
+	if id, e, ok := m.lastStore.Last(m.projectRoot); ok {
+		if c, found := m.commandByID(id); found {
+			pairs = append(pairs, ".", c.Name+" ("+ago(time.Since(e.At))+")")
+		}
+	}
+	pairs = append(pairs, "R", "rerun")
+	return keyBar(append(pairs, "/", "filter", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")...)
+}
+
+// ago is a short "how long ago" for the key bar.
+func ago(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
 func (m Model) renderHelp() string {
@@ -1420,6 +1613,9 @@ func (m Model) renderHelp() string {
 			row("↑/↓, j/k", "move selection") + "\n" +
 			row("enter", "run the selected command") + "\n" +
 			row("t", "run it with a full terminal (vim, less, psql...)") + "\n" +
+			row("⧉ after a name", "enter runs it with the full terminal (terminal: true)") + "\n" +
+			row(".", "run the last command run in this repo again, same answers") + "\n" +
+			row("R", "run the selected command with the answers you last gave it") + "\n" +
 			row("/", "filter by name") + "\n" +
 			row("yellow name", "a project command replacing your global script of that name") + "\n" +
 			row("tab", "next panel") + "\n" +
