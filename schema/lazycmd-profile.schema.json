@@ -26,6 +26,26 @@
         }
       }
     },
+    "params": {
+      "type": "object",
+      "description": "This repo's choices for select and multi params, keyed by command name or id, then by param name. options replaces the param's options (and its options_cmd, if any); default sets its preselected value and is checked against the options. Works on any command, e.g. a global script's sidecar. A defaults: entry for the same param wins.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "options": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "default": {
+              "oneOf": [
+                { "type": "string" }, { "type": "number" }, { "type": "boolean" },
+                { "type": "array", "items": { "type": ["string", "number", "boolean"] } }
+              ]
+            }
+          }
+        }
+      }
+    },
     "features": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Switch features back on that a broader file disabled." },
     "disable": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Features to turn off for this repo." },
     "maven": { "type": "object", "additionalProperties": { "type": "string" } },

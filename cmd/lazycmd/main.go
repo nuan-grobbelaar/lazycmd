@@ -64,8 +64,10 @@ func main() {
 		w = append(w, featCfgWarnings...)
 		w = append(w, featRunWarnings...)
 
-		// Defaults go last so they can reach feature commands too.
+		// Overrides and defaults go last so they can reach feature
+		// commands too; defaults after params, so they win.
 		if profile != nil {
+			w = append(w, config.ApplyParamOverrides(groups, profile.File.Params)...)
 			w = append(w, config.ApplyDefaults(groups, profile.File.Defaults)...)
 		}
 		return groups, w

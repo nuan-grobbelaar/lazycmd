@@ -276,6 +276,9 @@ defaults:
   deploy:
     env: staging
     service: "${env}-api"
+params:
+  echo-params:
+    features: { options: [logging, metrics, audit], default: [logging, audit] }
 disable: [git]
 maven:
   default_profile: local
@@ -286,6 +289,7 @@ maven:
 | `path` / `paths` | the repo(s) this profile is for. `~` is expanded; a relative path is relative to the profile file. Matches the repo itself **or any folder below it** |
 | `include` | extra commands for "This project" |
 | `defaults` | preselected form values |
+| `params` | this repo's options and default for a `select` / `multi` param |
 | `features`, `disable`, `maven`, … | exactly as in [config.yaml](#configyaml-features-and-settings) |
 
 **Matching.** With no `path`, the file name (without `.yaml`) must equal the repo folder's name, so `vandag.yaml` matches `~/repos/vandag`. If several profiles match, the first by file name wins. The header shows `profile <name>` when one matched.
@@ -294,9 +298,16 @@ maven:
 
 **defaults.** Keys are a command's display name (`maven: test`) or its id (`global:deploy-staging`, `maven:test`, `project:deploy`), then param names. This works for any command: global, project, included, or a discovered feature command. The values only preselect; you can still change them in the form.
 - Values: strings, numbers, bools, and a list for a `multi` param.
-- A `select` default must be one of its static options (otherwise it is ignored with a warning).
+- A `select` default, and each value of a `multi` default, must be one of its static options (otherwise it is ignored with a warning).
 - `${param}` refers to another param of the same command and is replaced when the form opens, using that param's default. References chain; a cycle or unknown name is a warning and the text is left as written. They do **not** follow what you type into the other field afterwards. Only values set in the profile are expanded, never a command's own `default:`.
 - An unknown command or param is a warning.
+
+**params.** Changes a `select` or `multi` param's choices for this repo, without editing the command's own file. That's handy for a global script whose sidecar can't know each project's options. Keyed like `defaults`.
+- `options` replaces the param's options. If the param had an `options_cmd`, that is replaced too, and its `depends_on` no longer applies. A profile can't *add* an `options_cmd`, so profiles never become another place where commands run.
+- `default` preselects, and is checked against the (new) options. A list works for `multi`, and `${param}` references work as in `defaults`.
+- Setting only `options` drops the command's own default if it isn't among them.
+- A `defaults:` entry for the same param wins, and is checked against the new options.
+- Options on a param that isn't `select` / `multi`, a default that isn't an option, and an unknown command or param are warnings. Only that part is skipped.
 
 ## State: logs and usage
 

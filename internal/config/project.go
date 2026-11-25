@@ -23,12 +23,15 @@ import (
 //	defaults:                     # preselected values in param forms
 //	  deploy-staging: { env: staging }
 //	  "maven: test": { module: api }
+//	params:                       # this repo's choices for select/multi params
+//	  echo-params: { features: { options: [a, b], default: [a] } }
 //	disable: [git]                # plus features:/maven:/npm:/... as in config.yaml
 type ProfileFile struct {
-	Path         string                    `yaml:"path,omitempty"`
-	Paths        []string                  `yaml:"paths,omitempty"`
-	Include      []string                  `yaml:"include,omitempty"`
-	Defaults     map[string]map[string]any `yaml:"defaults,omitempty"`
+	Path         string                              `yaml:"path,omitempty"`
+	Paths        []string                            `yaml:"paths,omitempty"`
+	Include      []string                            `yaml:"include,omitempty"`
+	Defaults     map[string]map[string]any           `yaml:"defaults,omitempty"`
+	Params       map[string]map[string]ParamOverride `yaml:"params,omitempty"`
 	FeaturesFile `yaml:",inline"`
 }
 
@@ -264,8 +267,8 @@ func setDefault(cmd *ResolvedCommand, param string, raw any) []string {
 		if err != nil {
 			return []string{fmt.Sprintf("defaults: %s.%s: %v", cmd.Name, param, err)}
 		}
-		if p.Type == ParamSelect && p.OptionsCmd == "" && len(p.Options) > 0 && !contains(p.Options, val) {
-			return []string{fmt.Sprintf("defaults: %s.%s: %q is not one of %s", cmd.Name, param, val, strings.Join(p.Options, ", "))}
+		if bad := notAnOption(*p, val); bad != "" {
+			return []string{fmt.Sprintf("defaults: %s.%s: %q is not one of %s", cmd.Name, param, bad, strings.Join(p.Options, ", "))}
 		}
 		p.Default = val
 		return nil

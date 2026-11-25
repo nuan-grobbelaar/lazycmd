@@ -98,3 +98,20 @@ func TestPreviewMasksSecrets(t *testing.T) {
 		t.Errorf("empty secret should not show the mask: %q", got)
 	}
 }
+
+func TestProfileOverriddenMultiIsPreselected(t *testing.T) {
+	groups := []config.Group{{Title: "Global", Commands: []config.ResolvedCommand{{
+		ID: "global:echo-params", Name: "echo-params", Run: "true",
+		Params: []config.Param{{Name: "features", Type: config.ParamMulti, OptionsCmd: "echo nope"}},
+	}}}}
+	if w := config.ApplyParamOverrides(groups, map[string]map[string]config.ParamOverride{
+		"echo-params": {"features": {Options: []string{"logging", "tracing", "audit"}, Default: []any{"logging", "audit"}}},
+	}); len(w) != 0 {
+		t.Fatal(w)
+	}
+	pf := newParamsForm(groups[0].Commands[0], t.TempDir())
+	pf.form.Init()
+	if got := pf.values()["features"]; got != "logging,audit" {
+		t.Errorf("features = %q, want logging,audit preselected", got)
+	}
+}
