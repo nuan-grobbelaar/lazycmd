@@ -14,12 +14,24 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/safetext"
 )
 
-const optionsCmdTimeout = 5 * time.Second
+// optionsCmdTimeout bounds an options_cmd run; a var so tests can shorten it.
+var optionsCmdTimeout = 5 * time.Second
+
+// optionsResult is one options_cmd run for one set of answers. done is
+// closed when it finishes: huh evaluates a field's options and its
+// description concurrently, and both read the same run instead of
+// starting one each.
+type optionsResult struct {
+	done chan struct{}
+	opts config.OptionList
+	err  string // why it produced no options, shown under the field
+}
 
 // paramsForm wraps a huh.Form built at runtime from a command's param
 // spec (one schema shared by commands.yaml, sidecars and, later,
@@ -37,7 +49,7 @@ type paramsForm struct {
 	notice string // shown in the modal when run-now is refused
 
 	cacheMu sync.Mutex
-	cache   map[string]config.OptionList
+	cache   map[string]*optionsResult
 }
 
 func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
@@ -47,7 +59,7 @@ func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
 		strVals:    map[string]*string{},
 		boolVals:   map[string]*bool{},
 		multiVals:  map[string]*[]string{},
-		cache:      map[string]config.OptionList{},
+		cache:      map[string]*optionsResult{},
 	}
 
 	fields := make([]huh.Field, 0, len(cmd.Params))
@@ -150,6 +162,9 @@ func (pf *paramsForm) attachSelectOptions(field *huh.Select[string], p config.Pa
 	field.OptionsFunc(func() []huh.Option[string] {
 		return pf.toOptions(p, pf.runOptionsCmd(p.OptionsCmd))
 	}, deps)
+	// No validator needed for enter: huh won't move past a select with no
+	// options. The run-now key skips huh, so problems() checks it.
+	field.DescriptionFunc(func() string { return pf.optionsNote(p.OptionsCmd) }, deps)
 }
 
 func (pf *paramsForm) attachMultiOptions(field *huh.MultiSelect[string], p config.Param) {
@@ -161,6 +176,20 @@ func (pf *paramsForm) attachMultiOptions(field *huh.MultiSelect[string], p confi
 	field.OptionsFunc(func() []huh.Option[string] {
 		return pf.toOptions(p, pf.runOptionsCmd(p.OptionsCmd))
 	}, deps)
+	field.DescriptionFunc(func() string { return pf.optionsNote(p.OptionsCmd) }, deps)
+}
+
+// optionsNote is the line under an options_cmd field: why it failed, or
+// that it ran fine but listed nothing. Empty when there are options.
+func (pf *paramsForm) optionsNote(cmdStr string) string {
+	r := pf.optionsFor(cmdStr)
+	switch {
+	case r.err != "":
+		return lipgloss.NewStyle().Foreground(colorRed).Render("⚠ options_cmd failed: " + r.err)
+	case len(r.opts) == 0:
+		return lipgloss.NewStyle().Foreground(colorTextDim).Render("no options")
+	}
+	return ""
 }
 
 // toOptions turns a param's options into huh options: labels from the
@@ -176,10 +205,6 @@ func (pf *paramsForm) toOptions(p config.Param, opts config.OptionList) []huh.Op
 	return out
 }
 
-// dependencyPointers resolves depends_on names to the bound pointers of
-// those earlier fields, which is what OptionsFunc hashes to decide
-// whether to re-run. Params must declare their dependencies earlier in
-// the list; an unresolved name is silently dropped.
 // dependencyPointers is the bindings huh watches to decide when to re-run
 // an OptionsFunc. huh runs it whenever the bindings' hash differs from
 // the last one, starting from 0, and nil bindings hash to 0 too, so a
@@ -200,35 +225,97 @@ func (pf *paramsForm) dependencyPointers(names []string) []any {
 	return deps
 }
 
-// runOptionsCmd runs cmdStr in the project root with every param value
-// collected so far injected as LC_<NAME>, so a dependent select can read
-// an earlier answer. Results are cached per (command, env) pair.
+// runOptionsCmd returns cmdStr's options for the answers so far.
 func (pf *paramsForm) runOptionsCmd(cmdStr string) config.OptionList {
+	return pf.optionsFor(cmdStr).opts
+}
+
+// optionsFor runs cmdStr in the project root with every param value
+// collected so far injected as LC_<NAME>, so a dependent select can read
+// an earlier answer. Results, failures included, are cached per (command,
+// answers) pair; a caller that arrives while a run is in flight waits for
+// it rather than starting another.
+func (pf *paramsForm) optionsFor(cmdStr string) *optionsResult {
 	env := pf.currentEnv()
 	key := cmdStr + "\x00" + strings.Join(env, "\x00")
 
 	pf.cacheMu.Lock()
-	if cached, ok := pf.cache[key]; ok {
+	if r, ok := pf.cache[key]; ok {
 		pf.cacheMu.Unlock()
-		return cached
+		<-r.done
+		return r
 	}
+	r := &optionsResult{done: make(chan struct{})}
+	pf.cache[key] = r
 	pf.cacheMu.Unlock()
 
+	r.opts, r.err = runOptions(cmdStr, pf.projectDir, env)
+	close(r.done)
+	return r
+}
+
+// finishedOptions returns the run for the current answers if it has
+// already finished, without starting or waiting for one. For use from
+// the UI goroutine, which must never block on a command.
+func (pf *paramsForm) finishedOptions(cmdStr string) (*optionsResult, bool) {
+	key := cmdStr + "\x00" + strings.Join(pf.currentEnv(), "\x00")
+	pf.cacheMu.Lock()
+	r, ok := pf.cache[key]
+	pf.cacheMu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	select {
+	case <-r.done:
+		return r, true
+	default:
+		return nil, false
+	}
+}
+
+// runOptions runs one options_cmd and returns its options, or why there
+// are none: a timeout, or the exit code with the first line of stderr.
+func runOptions(cmdStr, dir string, env []string) (config.OptionList, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), optionsCmdTimeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-	c.Dir = pf.projectDir
+	c.Dir = dir
 	c.Env = append(os.Environ(), env...)
+	// A child the shell started (sleep, a hung CLI) can keep the output
+	// pipe open after sh is killed; don't wait on it past the timeout.
+	c.WaitDelay = 500 * time.Millisecond
+	var stderr strings.Builder
+	c.Stderr = &stderr
 
-	var opts config.OptionList
-	if out, err := c.Output(); err == nil {
-		opts = config.ParseOptionLines(string(out)) // "value<TAB>label" or just the value
+	out, err := c.Output()
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		return nil, fmt.Sprintf("timed out after %s", optionsCmdTimeout)
+	case err != nil:
+		msg := err.Error()
+		if ee, ok := err.(*exec.ExitError); ok {
+			msg = fmt.Sprintf("exit %d", ee.ExitCode())
+		}
+		for _, line := range strings.Split(stderr.String(), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				msg += ": " + line
+				break
+			}
+		}
+		return nil, shortNote(msg)
 	}
+	return config.ParseOptionLines(string(out)), "" // "value<TAB>label" or just the value
+}
 
-	pf.cacheMu.Lock()
-	pf.cache[key] = opts
-	pf.cacheMu.Unlock()
-	return opts
+// shortNote cleans msg for display and caps it, since it can come from
+// any command's stderr.
+func shortNote(msg string) string {
+	const max = 200
+	msg = safetext.Line(msg)
+	if r := []rune(msg); len(r) > max {
+		msg = string(r[:max-1]) + "…"
+	}
+	return msg
 }
 
 func (pf *paramsForm) currentEnv() []string {
@@ -339,6 +426,18 @@ func shellQuote(a string) string {
 func (pf *paramsForm) problems() []string {
 	var out []string
 	for _, p := range pf.cmd.Params {
+		if p.Type == config.ParamSelect && p.OptionsCmd != "" && *pf.strVals[p.Name] == "" {
+			name := safetext.Line(p.Name)
+			switch r, done := pf.finishedOptions(p.OptionsCmd); {
+			case !done:
+				out = append(out, name+": options are still loading")
+			case r.err != "":
+				out = append(out, name+": nothing to pick (options_cmd failed)")
+			case len(r.opts) == 0:
+				out = append(out, name+": nothing to pick (no options)")
+			}
+			continue
+		}
 		if p.Type != config.ParamString && p.Type != "" {
 			continue
 		}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -150,5 +151,44 @@ args: ["--token", "{token}"]
 	}
 	if findCommand(groups, "This project", "login") != nil {
 		t.Error("command with a secret in args should be skipped")
+	}
+}
+
+func TestParamNamesValidated(t *testing.T) {
+	bad := map[string][]Param{
+		"space":         {{Name: "my name", Type: ParamString}},
+		"dash":          {{Name: "my-name", Type: ParamString}},
+		"equals":        {{Name: "a=b", Type: ParamString}},
+		"leading digit": {{Name: "1st", Type: ParamString}},
+		"empty":         {{Name: "", Type: ParamString}},
+		"duplicate":     {{Name: "env", Type: ParamString}, {Name: "env", Type: ParamSelect}},
+		"case dup":      {{Name: "env", Type: ParamString}, {Name: "ENV", Type: ParamString}},
+	}
+	for name, params := range bad {
+		if err := validateCommand(ResolvedCommand{Name: "x", Run: "true", Params: params}); err == nil {
+			t.Errorf("%s: %+v accepted", name, params)
+		}
+	}
+	good := []Param{{Name: "env", Type: ParamString}, {Name: "_tag2", Type: ParamString}, {Name: "also_make", Type: ParamBool}}
+	if err := validateCommand(ResolvedCommand{Name: "x", Run: "true", Params: good}); err != nil {
+		t.Errorf("valid names rejected: %v", err)
+	}
+
+	err := validateCommand(ResolvedCommand{Name: "x", Run: "true", Params: bad["space"]})
+	if err == nil || !strings.Contains(err.Error(), "$LC_MY NAME") {
+		t.Errorf("error should explain the env var: %v", err)
+	}
+}
+
+func TestSidecarWithBadParamNameIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "s.sh"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(dir, "s.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "s.lazycmd.yaml"), "params:\n  - { name: my name, type: string }\n")
+	cmds, w := scanScripts(dir, "global", nil)
+	if len(cmds) != 0 || len(w) != 1 || !strings.Contains(w[0], "letters, digits and _") {
+		t.Errorf("cmds = %+v, warnings = %v", cmds, w)
 	}
 }

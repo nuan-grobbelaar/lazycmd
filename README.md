@@ -135,7 +135,7 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 
 | Key | Meaning |
 |---|---|
-| `name` | required; the param's name (see [passing](#passing-params-to-a-command)) |
+| `name` | required; the param's name, which becomes `$LC_<NAME>` (see [passing](#passing-params-to-a-command)). Letters, digits and `_` only, not starting with a digit, and unique within the command (ignoring case). Otherwise the command is skipped with a warning |
 | `type` | `string` (default), `select`, `multi`, `bool`, `secret` or `text` |
 | `default` | initial value. Bools take `true`/`false`. For `multi`, a comma-separated list of options to preselect |
 | `pattern` | regexp a `string` value must match |
@@ -155,6 +155,8 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `text` | multi-line input |
 
 `options_cmd` runs in the repo root with a 5 second timeout, with every param answered so far available as `LC_<NAME>`. Results are cached per command and answers, so a dependent select re-runs only when what it depends on changes. It only runs after you select the command, never on startup. Declare a param after the ones it `depends_on`.
+
+If it fails, the field says why, in red: `⚠ options_cmd failed: exit 1: <first line of stderr>`, or `timed out after 5s`. A command that works but prints nothing shows `no options`. A `select` with nothing to pick can't be submitted. The message clears once a `depends_on` change makes the command work.
 
 ### Labels: showing something other than the value
 

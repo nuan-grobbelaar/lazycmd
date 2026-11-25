@@ -75,8 +75,23 @@ func validateCommand(cmd ResolvedCommand) error {
 
 // validateParams checks each param's pattern compiles, so a bad one is
 // a load warning instead of a crash when the form opens.
+// paramName is what a param may be called: it becomes LC_<NAME>, so it
+// must be a name a shell can read back ($LC_MY_NAME). A space or "-"
+// would make it unreadable, and "=" would split the variable
+// ("a=b" sets LC_A to "B=value").
+var paramName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func validateParams(cmd ResolvedCommand) error {
+	seen := map[string]bool{}
 	for _, p := range cmd.Params {
+		if !paramName.MatchString(p.Name) {
+			return fmt.Errorf("param %q: names may only use letters, digits and _, and can't start with a digit (it becomes $LC_%s)", p.Name, strings.ToUpper(p.Name))
+		}
+		key := strings.ToUpper(p.Name)
+		if seen[key] {
+			return fmt.Errorf("param %q is declared twice (names are case-insensitive: both become $LC_%s)", p.Name, key)
+		}
+		seen[key] = true
 		if !validLabelMode(p.Label) {
 			return fmt.Errorf("param %q: label must be %q or %q, not %q", p.Name, LabelBasename, LabelRelative, p.Label)
 		}

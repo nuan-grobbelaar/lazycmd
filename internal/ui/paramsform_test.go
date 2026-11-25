@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"lazycmd/internal/config"
 )
@@ -191,4 +192,143 @@ func TestMultiDefaultReachesCommandAnywhere(t *testing.T) {
 	if v := pf.values(); v["static"] != "a,c" || v["dynamic"] != "b" {
 		t.Errorf("values = %v, want both multi defaults", v)
 	}
+}
+
+func optionsForm(t *testing.T, optionsCmd string, extra ...config.Param) Model {
+	t.Helper()
+	pick := config.Param{Name: "pick", Type: config.ParamSelect, OptionsCmd: optionsCmd}
+	for _, e := range extra {
+		pick.DependsOn = append(pick.DependsOn, e.Name)
+	}
+	params := append(extra, pick)
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:x", Name: "x", Run: "true", Params: params},
+	}}}
+	m := ready(t, groups, t.TempDir(), t.TempDir())
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("expected a params form to open")
+	}
+	return m
+}
+
+func TestOptionsCmdFailureIsShown(t *testing.T) {
+	cases := []struct{ cmd, want string }{
+		{"echo 'gcloud: not logged in' >&2; exit 3", "⚠ options_cmd failed: exit 3: gcloud: not logged in"},
+		{"exit 1", "⚠ options_cmd failed: exit 1"},
+		{"printf 'bad\\033]0;x\\007\\n' >&2; exit 2", "exit 2: bad^[]0;x^G"},
+		{"true", "no options"},
+	}
+	for _, c := range cases {
+		m := optionsForm(t, c.cmd)
+		r := m.activeForm.optionsFor(c.cmd)
+		note := m.activeForm.optionsNote(c.cmd)
+		if !strings.Contains(note, c.want) {
+			t.Errorf("%q: note = %q (err %q), want %q", c.cmd, note, r.err, c.want)
+		}
+		if strings.Contains(note, "\x1b]0;") {
+			t.Errorf("%q: escape from stderr reached the note", c.cmd)
+		}
+	}
+	m := optionsForm(t, "echo a")
+	if note := m.activeForm.optionsNote("echo a"); note != "" {
+		t.Errorf("working options_cmd note = %q, want none", note)
+	}
+}
+
+func TestOptionsCmdTimeout(t *testing.T) {
+	old := optionsCmdTimeout
+	optionsCmdTimeout = 200 * time.Millisecond
+	defer func() { optionsCmdTimeout = old }()
+
+	m := optionsForm(t, "sleep 5; echo late")
+	start := time.Now()
+	r := m.activeForm.optionsFor("sleep 5; echo late")
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("timeout took %s; a child keeping the pipe open must not block", took)
+	}
+	if r.err != "timed out after 200ms" || len(r.opts) != 0 {
+		t.Errorf("result = %+v", r)
+	}
+}
+
+func TestOptionsCmdErrorShowsInFormAndClearsWithDependency(t *testing.T) {
+	cmd := `[ "$LC_ENV" = good ] && echo ok || { echo "no such env: $LC_ENV" >&2; exit 4; }`
+	m := optionsForm(t, cmd, config.Param{Name: "env", Type: config.ParamString, Default: "bad"})
+	m = pumpForm(t, m, func(v string) bool { return strings.Contains(v, "no such env: bad") })
+
+	// Retype env (the focused field) and move on with enter, which is when
+	// huh hands the input's text to the value. Every command huh returns is
+	// kept: they carry the reload of pick's options and description.
+	var cmds []tea.Cmd
+	key := func(k tea.KeyMsg) {
+		f, c := m.activeForm.form.Update(k)
+		m.activeForm.form = f.(*huh.Form)
+		cmds = append(cmds, c)
+	}
+	for i := 0; i < 3; i++ {
+		key(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("good")})
+	key(tea.KeyMsg{Type: tea.KeyEnter})
+	m = pumpForm(t, m, func(v string) bool { return !strings.Contains(v, "options_cmd failed") && strings.Contains(v, "ok") }, cmds...)
+	if got := *m.activeForm.strVals["env"]; got != "good" {
+		t.Fatalf("env = %q after typing, want good", got)
+	}
+}
+
+func TestSelectWithNoOptionsCantBeSubmitted(t *testing.T) {
+	m := optionsForm(t, "exit 1")
+	m = pumpForm(t, m, func(v string) bool { return strings.Contains(v, "options_cmd failed") })
+	// enter: huh won't leave a select with no options.
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("form closed: an empty select was submitted with enter")
+	}
+	// run-now skips huh's checks, so lazycmd's own must catch it.
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if m.activeForm == nil {
+		t.Fatal("form closed: an empty select was submitted with run-now")
+	}
+	if !strings.Contains(m.activeForm.notice, "pick: nothing to pick (options_cmd failed)") {
+		t.Errorf("notice = %q", m.activeForm.notice)
+	}
+}
+
+// pumpForm drives the open form until cond holds for its view: it runs
+// the commands huh returns (option and description loads) and, when none
+// are pending, sends a no-op message, since huh re-checks its dynamic
+// fields on every message.
+func pumpForm(t *testing.T, m Model, cond func(view string) bool, cmds ...tea.Cmd) Model {
+	t.Helper()
+	type nudge struct{}
+	pending := append([]tea.Cmd{m.activeForm.form.Init()}, cmds...)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond(m.activeForm.form.View()) {
+			return m
+		}
+		var msg tea.Msg = nudge{}
+		if len(pending) > 0 {
+			c := pending[0]
+			pending = pending[1:]
+			if c == nil {
+				continue
+			}
+			if msg = c(); msg == nil {
+				continue
+			}
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				pending = append(pending, batch...)
+				continue
+			}
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+		f, c := m.activeForm.form.Update(msg)
+		m.activeForm.form = f.(*huh.Form)
+		pending = append(pending, c)
+	}
+	t.Fatalf("condition never held; view:\n%s", m.activeForm.form.View())
+	return m
 }
