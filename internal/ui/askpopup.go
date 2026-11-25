@@ -132,11 +132,25 @@ func (m *Model) maybeOpenAsk() tea.Cmd {
 	default:
 		field = huh.NewSelect[string]().Title(title).Options(askOptions(p.Req.Options)...).Value(a.value)
 	}
-	w, h := m.formDims()
+	w, _ := m.formDims()
 	a.form = huh.NewForm(huh.NewGroup(field)).WithShowHelp(true).WithKeyMap(escCancelKeyMap()).
-		WithWidth(w - 2).WithHeight(max(3, h-6))
+		WithWidth(w - 2)
 	m.askPopup = a
 	return a.form.Init()
+}
+
+// askDims sizes the popup to its question: a text answer needs a few
+// rows, a pick one per option (scrolling past what fits on screen).
+func (m Model) askDims() (width, height, formHeight int) {
+	width, maxH := m.formDims()
+	rows := 2 // title + input
+	if m.askPopup.p.Req.Kind == ask.KindPick {
+		rows = 1 + len(m.askPopup.p.Req.Options)
+	}
+	formHeight = rows + 2            // + blank line and help line
+	height = min(maxH, formHeight+5) // + borders, "asked by" line and gap
+	formHeight = max(3, height-5)
+	return width, height, formHeight
 }
 
 func askOptions(opts []ask.Option) []huh.Option[string] {
@@ -185,10 +199,10 @@ func (m *Model) finishAsk(resp ask.Response) {
 }
 
 func (m Model) renderAskPopup() string {
-	width, height := m.formDims()
+	width, height, formHeight := m.askDims()
 	inner := max(1, width-2)
 	a := m.askPopup
-	a.form = a.form.WithWidth(inner).WithHeight(max(3, height-6))
+	a.form = a.form.WithWidth(inner).WithHeight(formHeight)
 	dim := lipgloss.NewStyle().Foreground(colorTextDim)
 	head := dim.Render("asked by the running job") + "\n\n"
 	content := head + a.form.View()

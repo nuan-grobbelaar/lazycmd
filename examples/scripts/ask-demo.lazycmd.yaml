@@ -1,0 +1,5 @@
+desc: |
+  Asks questions while it runs, with lazycmd ask / pick: a text answer with
+  a default, a pick with labels, a multi pick, and a secret. Each opens a
+  popup. Try starting it, then viewing another job before it asks: it waits
+  with a ? in the Jobs panel until you come back.

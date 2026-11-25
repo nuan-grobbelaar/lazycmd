@@ -12,10 +12,30 @@ import (
 func TestExamplesLoad(t *testing.T) {
 	dir := filepath.Join("..", "..", "examples")
 
-	cmds, warnings := scanScripts(filepath.Join(dir, "scripts"), "global", nil)
-	if len(warnings) != 0 || len(cmds) != 1 || cmds[0].Name != "deploy" {
-		t.Fatalf("scripts: cmds = %+v, warnings = %v", cmds, warnings)
+	all, warnings := scanScripts(filepath.Join(dir, "scripts"), "global", nil)
+	if len(warnings) != 0 {
+		t.Fatalf("scripts: warnings = %v", warnings)
 	}
+	byName := map[string]ResolvedCommand{}
+	for _, c := range all {
+		byName[c.Name] = c
+	}
+	for _, want := range []string{"deploy", "ask-demo", "pick-file", "panel-size", "broken-options"} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("example %q missing; got %v", want, all)
+		}
+	}
+	if !byName["pick-file"].Terminal || byName["deploy"].Confirm == "" || byName["broken-options"].Params[1].OptionsCmd == "" {
+		t.Error("examples lost the features they demonstrate")
+	}
+
+	// The repo's own .lazycmd/ lists the same scripts, through a symlink.
+	repoCmds, repoWarnings := ProjectCommands(filepath.Join("..", "..", ".lazycmd"))
+	if len(repoWarnings) != 0 || len(repoCmds) != len(all) {
+		t.Errorf(".lazycmd: %d commands (warnings %v), want %d", len(repoCmds), repoWarnings, len(all))
+	}
+
+	cmds := []ResolvedCommand{byName["deploy"]}
 
 	var prof ProfileFile
 	if err := decodeStrict(filepath.Join(dir, "projects", "my-app.yaml"), &prof); err != nil {

@@ -1,0 +1,2 @@
+desc: "Pick a file with fzf and preview it. terminal: true makes enter run it with the real terminal (marked ⧉ in the list)."
+terminal: true

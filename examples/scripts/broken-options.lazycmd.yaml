@@ -1,0 +1,17 @@
+desc: |
+  Shows how a failing options_cmd is reported. Pick region "eu" first: the
+  cluster list fails, with the reason in red under the field. Switch to
+  "us" and it loads. "empty" shows a command that works but lists nothing.
+params:
+  - name: region
+    type: select
+    options: [eu, us, empty]
+  - name: cluster
+    type: select
+    depends_on: [region]
+    options_cmd: |
+      case "$LC_REGION" in
+        us) printf 'us-1\tUS East\nus-2\tUS West\n' ;;
+        empty) true ;;
+        *) echo "no clusters configured for region $LC_REGION" >&2; exit 3 ;;
+      esac
