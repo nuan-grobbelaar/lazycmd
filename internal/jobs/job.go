@@ -103,7 +103,7 @@ func BuildCmd(resolved config.ResolvedCommand, values map[string]string) (*exec.
 	var cmd *exec.Cmd
 	switch {
 	case resolved.ScriptPath != "":
-		cmd = exec.Command(resolved.ScriptPath)
+		cmd = exec.Command(resolved.ScriptPath, config.ExpandArgs(resolved.Args, values)...)
 	case resolved.Run != "":
 		cmd = exec.Command("sh", "-c", resolved.Run)
 	default:

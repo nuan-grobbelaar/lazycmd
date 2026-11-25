@@ -23,6 +23,7 @@ type ResolvedCommand struct {
 	Params     []Param
 	Run        string
 	ScriptPath string
+	Args       []string // script arguments, with {param} placeholders; see args.go
 
 	// Preview, when set (feature commands only, never decoded from
 	// YAML), renders the command line the params form shows for the
@@ -145,6 +146,9 @@ func scriptCommand(dir, file, scope string) (ResolvedCommand, error) {
 			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
 		}
 		applySpec(&cmd, spec)
+		if err := validateArgs(cmd); err != nil {
+			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
+		}
 	}
 	return cmd, nil
 }
@@ -184,6 +188,10 @@ func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
 		if hasScript {
 			cmd.ScriptPath = filepath.Join(projectDir, spec.Script)
 		}
+		if err := validateArgs(cmd); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: command %q: %v", path, name, err))
+			continue
+		}
 		cmds = append(cmds, cmd)
 	}
 	return cmds, warnings
@@ -196,4 +204,5 @@ func applySpec(cmd *ResolvedCommand, spec Command) {
 	}
 	cmd.Params = spec.Params
 	cmd.Run = spec.Run
+	cmd.Args = spec.Args
 }

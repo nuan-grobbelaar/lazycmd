@@ -92,6 +92,11 @@ params:
   - { name: service, type: select, options_cmd: ls services }
 ```
 
+### Passing params to a script
+
+- **Env vars** (always): every param is also `LC_<NAME>`.
+- **`args:`** (scripts only): a list where each entry is exactly one argument and `{param}` is replaced by the value, e.g. `args: ["--env", "{env}", "--tag={tag}"]`. No shell is involved, so a value like `a b; rm -rf ~` stays one harmless argument. An entry whose placeholders are all empty is dropped (optional flags). `{{`/`}}` are literal braces. `args:` with `run:` is rejected; inside a `run:` body use `"$LC_NAME"`, never text substitution.
+
 ### Params and the huh form
 
 | Param type | huh field |

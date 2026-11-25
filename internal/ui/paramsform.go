@@ -280,9 +280,27 @@ func (pf *paramsForm) preview() string {
 		return "$ " + strings.Join(strings.Fields(body), " ")
 	}
 
+	if len(pf.cmd.Args) > 0 {
+		argv := append([]string{pf.cmd.ScriptPath}, config.ExpandArgs(pf.cmd.Args, values)...)
+		for i, a := range argv {
+			argv[i] = shellQuote(a)
+		}
+		return "$ " + strings.Join(argv, " ")
+	}
+
 	parts := make([]string, len(pf.cmd.Params))
 	for i, p := range pf.cmd.Params {
 		parts[i] = envVar(p.Name, values[p.Name])
 	}
 	return "$ " + pf.cmd.ScriptPath + "  " + strings.Join(parts, " ")
+}
+
+// shellQuote quotes a for display in the preview line only (jobs never
+// go through a shell for script args), so an argument with spaces reads
+// as one argument.
+func shellQuote(a string) string {
+	if a != "" && !strings.ContainsAny(a, " \t\n'\"$&;|<>()*?[]{}\\`!#~") {
+		return a
+	}
+	return "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 }

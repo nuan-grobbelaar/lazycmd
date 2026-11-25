@@ -51,7 +51,12 @@
           "items": { "$ref": "#/definitions/param" }
         },
         "run": { "type": "string", "description": "Inline shell. Exactly one of run/script, on a commands.yaml entry." },
-        "script": { "type": "string", "description": "Path to a script, relative to the project root. Exactly one of run/script." }
+        "script": { "type": "string", "description": "Path to a script, relative to the project root. Exactly one of run/script." },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments for the script, one per entry. {param} is replaced by that param's value ({{ and }} are literal braces); a value with spaces or ; is still one argument, since no shell is involved. An entry whose placeholders are all empty is dropped, so \"--env={env}\" vanishes when env is empty. Needs a script (or, in a sidecar, the script beside it); not allowed with run:. Params are also still passed as LC_<NAME> env vars."
+        }
       }
     }
   },

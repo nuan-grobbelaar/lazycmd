@@ -42,6 +42,10 @@ type Command struct {
 	Params []Param `yaml:"params,omitempty"`
 	Run    string  `yaml:"run,omitempty"`
 	Script string  `yaml:"script,omitempty"`
+	// Args are passed to the script, one argument per entry, with {param}
+	// replaced by the param's value. Needs script (or an adjacent script
+	// for a sidecar); see args.go.
+	Args []string `yaml:"args,omitempty"`
 }
 
 // CommandsFile is the root shape of a project's commands.yaml.

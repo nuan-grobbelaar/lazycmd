@@ -54,3 +54,15 @@ func TestMultiParamDefaultPreselects(t *testing.T) {
 		t.Errorf("features = %q, want the default preselected", got)
 	}
 }
+
+func TestPreviewShowsScriptArgsQuoted(t *testing.T) {
+	cmd := config.ResolvedCommand{
+		Name: "deploy", ScriptPath: "/s/deploy.sh",
+		Params: []config.Param{{Name: "svc", Type: config.ParamString, Default: "my api"}},
+		Args:   []string{"--svc", "{svc}"},
+	}
+	pf := newParamsForm(cmd, t.TempDir())
+	if got, want := pf.preview(), "$ /s/deploy.sh --svc 'my api'"; got != want {
+		t.Errorf("preview = %q, want %q", got, want)
+	}
+}

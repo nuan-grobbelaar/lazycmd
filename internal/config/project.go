@@ -197,6 +197,9 @@ func loadSidecarInclude(dir, name string) ([]ResolvedCommand, []string) {
 			return nil, []string{"no script named " + name + " beside it, and the sidecar has no run: or script:"}
 		}
 	}
+	if err := validateArgs(cmd); err != nil {
+		return nil, []string{sidecar + ": " + err.Error()}
+	}
 	return []ResolvedCommand{cmd}, nil
 }
 

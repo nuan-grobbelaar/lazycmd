@@ -230,3 +230,31 @@ func TestJobOutputNeverContainsScreenControl(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestScriptArgsArriveAsSeparateArguments(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "show.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := config.ResolvedCommand{
+		Name: "show", ScriptPath: script,
+		Params: []config.Param{{Name: "svc", Type: config.ParamString}, {Name: "opt", Type: config.ParamString}},
+		Args:   []string{"--svc", "{svc}", "--opt={opt}"},
+	}
+	j, err := Start("show", cmd, map[string]string{"svc": "my api; echo pwned", "opt": ""}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s, _, _ := j.Snapshot(); s != StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _ := j.Buffer.Snapshot()
+	if want := "[--svc]\n[my api; echo pwned]\n"; got != want {
+		t.Errorf("got %q, want %q (empty --opt= dropped, value kept as one arg)", got, want)
+	}
+}

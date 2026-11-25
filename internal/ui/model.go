@@ -838,9 +838,8 @@ func (m Model) renderOutputFooter(width int) string {
 	left := dim.Render(" " + follow + " · " + state)
 	right := ""
 	if status == jobs.StatusRunning {
-		right = keyHint("i", "type into job") + dim.Render(" · ")
+		right = keyHint("i", "type into job") + " "
 	}
-	right += keyHint("/", "search") + dim.Render(" · ") + keyHint("y", "copy") + " "
 	return spread(left, right, width)
 }
 
