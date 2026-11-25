@@ -3,7 +3,7 @@ package features
 import (
 	"path/filepath"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 type Vite struct{}

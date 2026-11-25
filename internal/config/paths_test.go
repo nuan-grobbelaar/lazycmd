@@ -16,7 +16,7 @@ func TestGlobalDirAndStateDirAreUnderHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".config", "lazycast"); global != want {
+	if want := filepath.Join(home, ".config", "lazycmd"); global != want {
 		t.Errorf("GlobalDir() = %q, want %q", global, want)
 	}
 
@@ -24,7 +24,7 @@ func TestGlobalDirAndStateDirAreUnderHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(home, ".local", "state", "lazycast"); state != want {
+	if want := filepath.Join(home, ".local", "state", "lazycmd"); state != want {
 		t.Errorf("StateDir() = %q, want %q", state, want)
 	}
 }

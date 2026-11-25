@@ -2,14 +2,14 @@
 // vite config, .git) into command specs in the same schema used by
 // commands.yaml and sidecars. Detection only ever parses files - never
 // shells out to mvn/npm/vite/git to discover what's there - so opening
-// lazycast in a repo never executes anything from that repo.
+// lazycmd in a repo never executes anything from that repo.
 package features
 
 import (
 	"fmt"
 	"os"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 type Feature interface {

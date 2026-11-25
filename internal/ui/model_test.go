@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"lazycast/internal/config"
-	"lazycast/internal/jobs"
+	"lazycmd/internal/config"
+	"lazycmd/internal/jobs"
 )
 
 func testGroups() []config.Group {
@@ -62,7 +62,7 @@ func writeExecutable(t *testing.T, path, script string) {
 func TestViewShowsAllThreePanelTitles(t *testing.T) {
 	m := ready(t, testGroups(), t.TempDir(), "/repo")
 	view := m.View()
-	for _, title := range []string{"[1] Commands", "[2] Output", "[3] Jobs"} {
+	for _, title := range []string{"[1] Commands", "[2] Jobs", "[3] Output"} {
 		if !strings.Contains(view, title) {
 			t.Errorf("View() missing panel title %q", title)
 		}
@@ -79,7 +79,7 @@ func TestViewShowsFormAsAnOverlay(t *testing.T) {
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
-	if !strings.Contains(view, "Params: greet") {
+	if !strings.Contains(view, "greet") {
 		t.Errorf("View() missing the form modal title; got:\n%s", view)
 	}
 	// The base view behind the modal should still be present - that's
@@ -100,17 +100,17 @@ func TestViewDoesNotPanicAtDegenerateSizes(t *testing.T) {
 
 func TestEmptyStateMessageDistinguishesNoCommandsFromNoMatches(t *testing.T) {
 	m := ready(t, nil, t.TempDir(), "/repo")
-	if !strings.Contains(m.renderList(), "no commands found") {
+	if !strings.Contains(m.renderList(40), "no commands found") {
 		t.Errorf("expected the no-commands-at-all message when nothing is configured")
 	}
 
 	m = ready(t, testGroups(), t.TempDir(), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("nonexistent")})
-	if !strings.Contains(m.renderList(), "no matches") {
+	if !strings.Contains(m.renderList(40), "no matches") {
 		t.Errorf("expected the no-matches message when a filter excludes everything")
 	}
-	if strings.Contains(m.renderList(), "no commands found") {
+	if strings.Contains(m.renderList(40), "no commands found") {
 		t.Errorf("should not show the no-commands message when commands exist but are filtered out")
 	}
 }
@@ -287,5 +287,84 @@ func TestEscAbortsOpenForm(t *testing.T) {
 	}
 	if m.activeJob != nil {
 		t.Error("expected no job to have started after abort")
+	}
+}
+
+func TestPanelJumpKeys(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	press := func(m Model, msg tea.KeyMsg) Model { m, _ = sendKey(t, m, msg); return m }
+	right, left := tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyLeft}
+
+	for _, want := range []focusZone{focusJobs, focusOutput, focusOutput} {
+		m = press(m, right)
+		if m.focus != want {
+			t.Fatalf("right: focus = %v, want %v", m.focus, want)
+		}
+	}
+	for _, want := range []focusZone{focusJobs, focusList, focusList} {
+		m = press(m, left)
+		if m.focus != want {
+			t.Fatalf("left: focus = %v, want %v", m.focus, want)
+		}
+	}
+
+	m = press(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("™")})
+	if m.focus != focusJobs {
+		t.Fatalf("option+2: focus = %v, want jobs", m.focus)
+	}
+	m = press(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1"), Alt: true})
+	if m.focus != focusList {
+		t.Fatalf("alt+1: focus = %v, want list", m.focus)
+	}
+}
+
+func TestAdhocCommandRunsTypedTextAsNamedJob(t *testing.T) {
+	groups := append([]config.Group{config.AdhocGroup()}, testGroups()...)
+	m := ready(t, groups, t.TempDir(), "/repo")
+	if m.rows[0].label != "Ad-hoc" {
+		t.Fatalf("first row = %q, want the Ad-hoc group above everything else", m.rows[0].label)
+	}
+
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // open the form
+	if m.activeForm == nil {
+		t.Fatal("enter on the ad-hoc entry should open its form")
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo hi && echo there")})
+	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	// huh reports completion through a follow-up message.
+	for i := 0; cmd != nil && m.activeJob == nil && i < 5; i++ {
+		msg := cmd()
+		m2, c2 := m.Update(msg)
+		m, cmd = m2.(Model), c2
+	}
+	if m.activeJob == nil {
+		t.Fatalf("no job started; form still open = %v", m.activeForm != nil)
+	}
+	t.Cleanup(m.Shutdown)
+	if got, want := m.activeJob.job.Name, "echo hi && echo there"; got != want {
+		t.Errorf("job name = %q, want the typed command %q", got, want)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s, _, _ := m.activeJob.job.Snapshot(); s != jobs.StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	out, _ := m.activeJob.job.Buffer.Snapshot()
+	if !strings.Contains(out, "hi\n") || !strings.Contains(out, "there\n") {
+		t.Errorf("output = %q, want both echo lines (eval should honour &&)", out)
+	}
+}
+
+func TestHeaderShowsProfileName(t *testing.T) {
+	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	if strings.Contains(m.renderHeader(), "profile") {
+		t.Error("header shows a profile when none matched")
+	}
+	m = m.WithProfile("vandag")
+	h := m.renderHeader()
+	if !strings.Contains(h, "profile") || !strings.Contains(h, "vandag") {
+		t.Errorf("header = %q, want it to show the profile name", h)
 	}
 }

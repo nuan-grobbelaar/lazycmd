@@ -1,4 +1,4 @@
-module lazycast
+module lazycmd
 
 go 1.24.6
 

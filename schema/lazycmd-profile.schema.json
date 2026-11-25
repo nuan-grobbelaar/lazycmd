@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/lazycmd/lazycmd/main/schema/lazycmd-profile.schema.json",
+  "title": "lazycmd project profile",
+  "description": "~/.config/lazycmd/projects/<name>.yaml: a central profile for one repo, kept outside the repo. Matched by path (the repo or any folder below a listed path) or, with no path, by the file name equalling the repo's folder name. Keep in sync with internal/config/project.go. Reference from a YAML file with:\n  # yaml-language-server: $schema=../../../path/to/lazycmd-profile.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": { "type": "string", "description": "Repo this profile is for. ~ is expanded; a relative path is relative to this file." },
+    "paths": { "type": "array", "items": { "type": "string" }, "description": "Several repos sharing one profile." },
+    "include": {
+      "type": "array",
+      "description": "Commands to add to 'This project'. Each entry is a script (its <name>.lazycmd.yaml sidecar beside it is picked up), a <name>.lazycmd.yaml sidecar (its script sits beside it, or the sidecar sets run:/script:), a commands.yaml-shaped file, or a folder of scripts. ~ is expanded; relative paths are relative to this file. The repo's own .lazycmd/ wins on a name clash.",
+      "items": { "type": "string" }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Preselected values for param forms, keyed by command name ('deploy-staging', 'maven: test') or id ('global:deploy-staging'), then by param name. Applies to any command, including discovered feature commands. Values stay editable in the form. A value can refer to another param of the same command as ${name}; references resolve when the form opens, from that param's default, and chain. A list preselects options of a multi param.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            { "type": "string" }, { "type": "number" }, { "type": "boolean" },
+            { "type": "array", "items": { "type": ["string", "number", "boolean"] } }
+          ]
+        }
+      }
+    },
+    "features": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Switch features back on that a broader file disabled." },
+    "disable": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Features to turn off for this repo." },
+    "maven": { "type": "object", "additionalProperties": { "type": "string" } },
+    "npm": { "type": "object", "additionalProperties": { "type": "string" } },
+    "vite": { "type": "object", "additionalProperties": { "type": "string" } },
+    "git": { "type": "object", "additionalProperties": { "type": "string" } }
+  }
+}

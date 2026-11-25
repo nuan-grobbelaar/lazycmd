@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const sidecarSuffix = ".lazycast.yaml"
+const sidecarSuffix = ".lazycmd.yaml"
 
 // ResolvedCommand is a command spec after merging a script with its
 // optional sidecar, or after reading a commands.yaml entry. It's the
@@ -23,6 +23,12 @@ type ResolvedCommand struct {
 	Params     []Param
 	Run        string
 	ScriptPath string
+
+	// Preview, when set (feature commands only, never decoded from
+	// YAML), renders the command line the params form shows for the
+	// current answers. Needed where Run builds its arguments
+	// conditionally, which plain $LC_ substitution can't show.
+	Preview func(values map[string]string) string
 }
 
 type Group struct {
@@ -38,6 +44,13 @@ type Group struct {
 // entry) are collected as warnings and skip just that file or entry;
 // they never abort discovery.
 func Discover(globalDir, projectDir string) (groups []Group, warnings []string) {
+	return DiscoverWith(globalDir, projectDir, nil)
+}
+
+// DiscoverWith is Discover plus extra project commands from elsewhere
+// (the files a central project profile includes). The repo's own
+// .lazycmd/ commands win over an extra command of the same name.
+func DiscoverWith(globalDir, projectDir string, extra []ResolvedCommand) (groups []Group, warnings []string) {
 	globalCmds, warnings := scanScripts(filepath.Join(globalDir, "scripts"), "global", warnings)
 
 	var projectCmds []ResolvedCommand
@@ -49,6 +62,18 @@ func Discover(globalDir, projectDir string) (groups []Group, warnings []string) 
 		fileCmds, fileWarnings := loadCommandsFile(projectDir)
 		warnings = append(warnings, fileWarnings...)
 		projectCmds = append(projectCmds, fileCmds...)
+	}
+	have := make(map[string]bool, len(projectCmds))
+	for _, c := range projectCmds {
+		have[c.Name] = true
+	}
+	for _, c := range extra {
+		if have[c.Name] {
+			warnings = append(warnings, fmt.Sprintf("included command %q (%s) skipped: the project already defines one with that name", c.Name, c.ScriptPath))
+			continue
+		}
+		have[c.Name] = true
+		projectCmds = append(projectCmds, c)
 	}
 
 	shadowed := make(map[string]bool, len(projectCmds))
@@ -97,22 +122,31 @@ func scanScripts(dir, scope string, warnings []string) ([]ResolvedCommand, []str
 			continue
 		}
 
-		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		scriptPath := filepath.Join(dir, entry.Name())
-		cmd := ResolvedCommand{ID: scope + ":" + name, Name: name, Mode: ModePanel, ScriptPath: scriptPath}
-
-		sidecarPath := filepath.Join(dir, name+sidecarSuffix)
-		if _, err := os.Stat(sidecarPath); err == nil {
-			var spec Command
-			if err := decodeStrict(sidecarPath, &spec); err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: %v", sidecarPath, err))
-				continue
-			}
-			applySpec(&cmd, spec)
+		cmd, err := scriptCommand(dir, entry.Name(), scope)
+		if err != nil {
+			warnings = append(warnings, err.Error())
+			continue
 		}
 		cmds = append(cmds, cmd)
 	}
 	return cmds, warnings
+}
+
+// scriptCommand builds the command for the script file dir/file,
+// upgraded by a sidecar (<name>.lazycmd.yaml) next to it if one exists.
+func scriptCommand(dir, file, scope string) (ResolvedCommand, error) {
+	name := strings.TrimSuffix(file, filepath.Ext(file))
+	cmd := ResolvedCommand{ID: scope + ":" + name, Name: name, Mode: ModePanel, ScriptPath: filepath.Join(dir, file)}
+
+	sidecarPath := filepath.Join(dir, name+sidecarSuffix)
+	if _, err := os.Stat(sidecarPath); err == nil {
+		var spec Command
+		if err := decodeStrict(sidecarPath, &spec); err != nil {
+			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
+		}
+		applySpec(&cmd, spec)
+	}
+	return cmd, nil
 }
 
 // loadCommandsFile reads projectDir/commands.yaml. A command entry that
@@ -123,6 +157,13 @@ func loadCommandsFile(projectDir string) ([]ResolvedCommand, []string) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, nil
 	}
+	return loadCommandsFileAt(path)
+}
+
+// loadCommandsFileAt reads a commands.yaml-shaped file; relative
+// script: paths in it resolve against the file's own directory.
+func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
+	projectDir := filepath.Dir(path)
 
 	var file CommandsFile
 	if err := decodeStrict(path, &file); err != nil {

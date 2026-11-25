@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 func TestRecordAndScore(t *testing.T) {

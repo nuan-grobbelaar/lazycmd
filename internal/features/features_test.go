@@ -2,11 +2,13 @@ package features
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -271,5 +273,143 @@ func TestDiscoverSkipsDisabledAndUndetected(t *testing.T) {
 	}
 	if groups[0].Title != "Discovered — Maven (pom.xml)" {
 		t.Errorf("title = %q", groups[0].Title)
+	}
+}
+
+// runWithStub runs a command's Run body under sh with a stub binary
+// named bin on PATH that prints its argv, returning that output.
+func runWithStub(t *testing.T, bin, body string, env map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, bin), "#!/bin/sh\necho \"$@\"\n")
+	if err := os.Chmod(filepath.Join(dir, bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", body)
+	cmd.Env = append([]string{"PATH=" + dir + ":/usr/bin:/bin"}, envList(env)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sh: %v\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func envList(m map[string]string) []string {
+	var out []string
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+func TestMavenAlsoMakeParamAndRun(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>core</module><module>api</module></modules></project>`)
+	cmds, err := Maven{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var test config.ResolvedCommand
+	for _, c := range cmds {
+		if c.Name == "maven: test" {
+			test = c
+		}
+	}
+	var gotAM bool
+	for _, p := range test.Params {
+		if p.Name == "also_make" && p.Type == config.ParamBool {
+			gotAM = true
+		}
+	}
+	if !gotAM {
+		t.Fatalf("params = %+v, want an also_make bool", test.Params)
+	}
+
+	cases := []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"LC_MODULE": "api", "LC_ALSO_MAKE": "true", "LC_PROFILE": "local"}, "-pl api -am -Plocal test"},
+		{map[string]string{"LC_MODULE": "api", "LC_ALSO_MAKE": "false"}, "-pl api test"},
+		{map[string]string{"LC_ALSO_MAKE": "true"}, "test"}, // no module: -am alone is meaningless
+	}
+	for _, c := range cases {
+		if got := runWithStub(t, "mvn", test.Run, c.env); got != c.want {
+			t.Errorf("env %v: mvn argv = %q, want %q", c.env, got, c.want)
+		}
+	}
+
+	prev := test.Preview(map[string]string{"module": "api", "also_make": "true", "profile": "local"})
+	if prev != "mvn test -pl api -am -Plocal" {
+		t.Errorf("preview = %q", prev)
+	}
+}
+
+func TestMavenNoModulesNoAlsoMake(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project></project>`)
+	cmds, _ := Maven{}.Commands(root, nil)
+	for _, c := range cmds {
+		for _, p := range c.Params {
+			if p.Name == "also_make" {
+				t.Fatalf("%s offers also_make without modules", c.Name)
+			}
+		}
+	}
+}
+
+func TestNpmWorkspacesPicker(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"), `{"name":"root","workspaces":["packages/*"],"scripts":{"lint":"x"}}`)
+	writeFile(t, filepath.Join(root, "pnpm-lock.yaml"), "")
+	writeFile(t, filepath.Join(root, "packages/web/package.json"), `{"name":"@app/web","scripts":{"dev":"vite","lint":"y"}}`)
+	writeFile(t, filepath.Join(root, "packages/api/package.json"), `{"name":"@app/api","scripts":{"test":"jest"}}`)
+	writeFile(t, filepath.Join(root, "packages/notapkg/readme.md"), "")
+
+	cmds, err := Npm{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	byName := map[string]config.ResolvedCommand{}
+	for _, c := range cmds {
+		names = append(names, c.Name)
+		byName[c.Name] = c
+	}
+	for _, want := range []string{"npm: dev", "npm: lint", "npm: test"} {
+		if !contains(names, want) {
+			t.Errorf("missing %q in %v", want, names)
+		}
+	}
+	lint := byName["npm: lint"]
+	if len(lint.Params) != 1 || lint.Params[0].Name != "workspace" {
+		t.Fatalf("params = %+v", lint.Params)
+	}
+	opts := lint.Params[0].Options
+	if len(opts) != 3 || opts[0] != "." || opts[1] != "@app/api" || opts[2] != "@app/web" {
+		t.Errorf("options = %v, want [. @app/api @app/web]", opts)
+	}
+
+	if got := runWithStub(t, "pnpm", lint.Run, map[string]string{"LC_WORKSPACE": "."}); got != "run lint" {
+		t.Errorf("root run argv = %q", got)
+	}
+	if got := runWithStub(t, "pnpm", lint.Run, map[string]string{"LC_WORKSPACE": "@app/web"}); got != "--filter @app/web run lint" {
+		t.Errorf("workspace run argv = %q", got)
+	}
+	if got := lint.Preview(map[string]string{"workspace": "@app/web"}); got != "pnpm --filter @app/web run lint" {
+		t.Errorf("preview = %q", got)
+	}
+}
+
+func TestNpmWorkspacesObjectForm(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"), `{"workspaces":{"packages":["libs/*"]},"scripts":{"build":"x"}}`)
+	writeFile(t, filepath.Join(root, "libs/a/package.json"), `{"name":"a"}`)
+	cmds, _ := Npm{}.Commands(root, nil)
+	if len(cmds) != 1 || len(cmds[0].Params) != 1 {
+		t.Fatalf("cmds = %+v", cmds)
+	}
+	if got := cmds[0].Preview(map[string]string{"workspace": "a"}); got != "npm run build --workspace a" {
+		t.Errorf("preview = %q", got)
 	}
 }

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,9 +14,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"lazycast/internal/config"
-	"lazycast/internal/jobs"
-	"lazycast/internal/usage"
+	"lazycmd/internal/config"
+	"lazycmd/internal/jobs"
+	"lazycmd/internal/usage"
 )
 
 const pollInterval = 50 * time.Millisecond
@@ -52,6 +54,7 @@ type Model struct {
 	warnings    []string
 	stateDir    string
 	projectRoot string
+	profileName string // matched central project profile, shown in the header
 	usageLog    *usage.Log
 
 	viewport    viewport.Model
@@ -102,6 +105,13 @@ func New(groups []config.Group, warnings []string, stateDir, projectRoot string)
 		projectRoot: projectRoot,
 		usageLog:    usageLog,
 	}
+}
+
+// WithProfile records the name of the project profile that matched this
+// repo, for the header. Empty means none.
+func (m Model) WithProfile(name string) Model {
+	m.profileName = name
+	return m
 }
 
 // Shutdown kills any jobs still running when the program exits, so a
@@ -197,7 +207,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// line gets padded to the stale width and then truncated
 			// (with a spurious "…") back down to the modal's real one.
 			w, h := m.formDims()
-			m.activeForm.form = m.activeForm.form.WithWidth(w - 2).WithHeight(h - 2 - previewReserveLines)
+			m.activeForm.form = m.activeForm.form.WithWidth(w - 2).WithHeight(m.formFieldsHeight(h))
 			return m.updateActiveForm(msg)
 		}
 		return m, nil
@@ -396,12 +406,39 @@ func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.applyFilter()
 		}
 		return m, nil
+	case "alt+1", "¡":
+		m.focus = focusList
+		return m, nil
+	case "alt+2", "™":
+		m.focus = focusJobs
+		return m, nil
+	case "alt+3", "£":
+		m.focus = focusOutput
+		return m, nil
+	case "left":
+		// Panels are ordered 1 Commands, 2 Jobs, 3 Output; arrows step
+		// through them without wrapping.
+		switch m.focus {
+		case focusOutput:
+			m.focus = focusJobs
+		case focusJobs:
+			m.focus = focusList
+		}
+		return m, nil
+	case "right":
+		switch m.focus {
+		case focusList:
+			m.focus = focusJobs
+		case focusJobs:
+			m.focus = focusOutput
+		}
+		return m, nil
 	case "tab":
 		switch m.focus {
 		case focusList:
-			m.focus = focusOutput
-		case focusOutput:
 			m.focus = focusJobs
+		case focusJobs:
+			m.focus = focusOutput
 		default:
 			m.focus = focusList
 		}
@@ -493,7 +530,7 @@ func (m Model) selectRow(mode runMode) (tea.Model, tea.Cmd) {
 	m.pendingRunMode = mode
 	w, h := m.formDims()
 	m.activeForm = newParamsForm(cmdSpec, m.projectRoot)
-	m.activeForm.form = m.activeForm.form.WithWidth(w - 2).WithHeight(h - 2 - previewReserveLines)
+	m.activeForm.form = m.activeForm.form.WithWidth(w - 2).WithHeight(m.formFieldsHeight(h))
 	return m, m.activeForm.form.Init()
 }
 
@@ -525,6 +562,15 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 
 	m.jobSeq++
 	id := fmt.Sprintf("%s-%d", cmdSpec.Name, m.jobSeq)
+	if cmdSpec.ID == config.AdhocID {
+		// An ad-hoc job is named after what was typed, so the jobs panel,
+		// output title and a restart all show the real command. The log
+		// file name above was built from the fixed entry name instead,
+		// since typed text can contain slashes.
+		if typed := strings.TrimSpace(values["command"]); typed != "" {
+			cmdSpec.Name = typed
+		}
+	}
 
 	job, err := jobs.Start(id, cmdSpec, values, m.stateDir)
 	if err != nil {
@@ -564,20 +610,25 @@ func (m *Model) moveCursor(delta int) {
 }
 
 const (
-	listWidthFrac       = 0.26
-	jobsWidthFrac       = 0.22
-	keyBarHeight        = 1
-	previewReserveLines = 2 // preview line + blank separator, above the form
+	leftWidthFrac = 0.30
+	jobsHeight    = 8 // outer height of the Jobs panel (5 rows + borders + a spare)
+	headerHeight  = 1
+	keyBarHeight  = 1
+	// outputFooterHeight is the status line inside the output panel
+	// ("following · running 0:21", hints on the right).
+	outputFooterHeight  = 1
+	previewReserveLines = 5 // blank separator + 3-line bordered preview box + huh trailing line, below the form
 )
 
-// dims returns the three panels' widths and the shared body height
-// (all outer, border-inclusive), used by layout, View and selectRow so
-// they can't drift apart.
-func (m Model) dims() (listWidth, outputWidth, jobsWidth, bodyHeight int) {
-	listWidth = int(float64(m.width) * listWidthFrac)
-	jobsWidth = int(float64(m.width) * jobsWidthFrac)
-	outputWidth = m.width - listWidth - jobsWidth
-	bodyHeight = m.height - keyBarHeight
+// dims returns the left column's width, the output panel's width, the
+// Jobs panel's height, and the shared body height (all outer,
+// border-inclusive), used by layout and View so they can't drift apart.
+// The design stacks Commands over Jobs on the left, Output on the right.
+func (m Model) dims() (leftWidth, outputWidth, jobsH, bodyHeight int) {
+	leftWidth = int(float64(m.width) * leftWidthFrac)
+	outputWidth = m.width - leftWidth
+	bodyHeight = m.height - headerHeight - keyBarHeight
+	jobsH = clampInt(jobsHeight, 3, bodyHeight/2)
 	return
 }
 
@@ -607,8 +658,19 @@ func clampInt(desired, min, max int) int {
 // space at the bottom, which reads fine for a dialog.
 func (m Model) formDims() (width, height int) {
 	width = clampInt(70, 40, m.width-6)
-	height = clampInt(22, 10, m.height-4)
+	height = clampInt(30, 10, m.height-4)
 	return
+}
+
+// formFieldsHeight is the height left for the huh form inside a modal
+// of outer height h, after the borders, the preview box beneath it and
+// the description (plus its blank line) above it.
+func (m Model) formFieldsHeight(h int) int {
+	reserve := 2 + previewReserveLines
+	if m.activeForm != nil && m.activeForm.cmd.Desc != "" {
+		reserve += 2
+	}
+	return max(1, h-reserve)
 }
 
 func (m Model) promptDims() (width, height int) {
@@ -619,7 +681,7 @@ func (m Model) promptDims() (width, height int) {
 func (m *Model) layout() {
 	_, outputWidth, _, bodyHeight := m.dims()
 	followed := m.followTail
-	m.viewport = viewport.New(outputWidth-2, bodyHeight-2)
+	m.viewport = viewport.New(outputWidth-2, max(1, bodyHeight-2-outputFooterHeight))
 	m.viewport.SetContent(m.activeJobBody())
 	// viewport.New always starts at the top; a resize shouldn't silently
 	// stop following a job that was still being followed.
@@ -658,7 +720,7 @@ func (m Model) activeJobBody() string {
 
 func (m Model) View() string {
 	if !m.ready {
-		return "starting lazycast..."
+		return "starting lazycmd..."
 	}
 	if m.helpActive {
 		return m.renderHelp()
@@ -675,43 +737,178 @@ func (m Model) View() string {
 }
 
 func (m Model) renderBase() string {
-	listWidth, outputWidth, jobsWidth, bodyHeight := m.dims()
+	leftWidth, outputWidth, jobsH, bodyHeight := m.dims()
 
-	listPanel := renderPanel("[1] Commands", m.renderList(), listWidth, bodyHeight, m.focus == focusList)
+	cmdPanel := renderPanel("[1] Commands", m.renderList(leftWidth-2), leftWidth, bodyHeight-jobsH, m.focus == focusList)
+	jobsPanel := renderPanel("[2] Jobs", m.renderJobsList(leftWidth-2), leftWidth, jobsH, m.focus == focusJobs)
+	left := lipgloss.JoinVertical(lipgloss.Left, cmdPanel, jobsPanel)
 
-	outputTitle := "[2] Output"
-	if m.inputFocus {
-		outputTitle = "[2] Output (input mode)"
+	outputTitle := "[3] Output"
+	if m.activeJob != nil {
+		outputTitle += " · " + m.activeJob.job.Name
 	}
-	outputPanel := renderPanel(outputTitle, m.viewport.View(), outputWidth, bodyHeight, m.focus == focusOutput)
+	if m.inputFocus {
+		outputTitle += " (input mode)"
+	}
+	outInner := outputWidth - 2
+	outBody := m.viewport.View() + "\n" + m.renderOutputFooter(outInner)
+	outputPanel := renderPanel(outputTitle, outBody, outputWidth, bodyHeight, m.focus == focusOutput)
 
-	jobsPanel := renderPanel("[3] Jobs", m.renderJobsList(), jobsWidth, bodyHeight, m.focus == focusJobs)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, outputPanel)
+	return lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(), body, m.renderKeyBar())
+}
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, outputPanel, jobsPanel)
-	keyBar := m.renderKeyBar()
-	return lipgloss.JoinVertical(lipgloss.Left, body, keyBar)
+// spread lays left and right out on one line of the given width, right
+// aligned, truncating left first if they don't both fit.
+func spread(left, right string, width int) string {
+	rw := lipgloss.Width(right)
+	if rw >= width {
+		return ansi.Truncate(right, width, "")
+	}
+	left = ansi.Truncate(left, width-rw-1, "…")
+	gap := width - lipgloss.Width(left) - rw
+	return left + strings.Repeat(" ", max(0, gap)) + right
+}
+
+// gitBranch reads the current branch from .git/HEAD without invoking
+// git (nothing executes just because lazycmd opened a repo). Empty
+// when the directory isn't a checkout or HEAD is detached.
+func gitBranch(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, ".git", "HEAD"))
+	if err != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(string(data))
+	if name, ok := strings.CutPrefix(ref, "ref: refs/heads/"); ok {
+		return name
+	}
+	return ""
+}
+
+func (m Model) renderHeader() string {
+	amber := lipgloss.NewStyle().Bold(true).Foreground(colorAmber)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	green := lipgloss.NewStyle().Foreground(colorAccent)
+
+	path := m.projectRoot
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, ok := strings.CutPrefix(path, home); ok {
+			path = "~" + rel
+		}
+	}
+	left := " " + amber.Render("lazycmd") + "  " + dim.Render(path)
+	if br := gitBranch(m.projectRoot); br != "" {
+		left += "  " + dim.Render("branch") + " " + green.Render(br)
+	}
+	if m.profileName != "" {
+		left += "  " + dim.Render("profile") + " " + lipgloss.NewStyle().Foreground(colorBlue).Render(m.profileName)
+	}
+
+	var feats []string
+	for _, r := range m.allRows {
+		if r.isHeader && strings.HasPrefix(r.label, "Discovered") {
+			name := r.label
+			if _, rest, ok := strings.Cut(name, "— "); ok {
+				name, _, _ = strings.Cut(rest, " (")
+			}
+			feats = append(feats, strings.ToLower(name))
+		}
+	}
+	right := ""
+	if len(feats) > 0 {
+		right = dim.Render("features: "+strings.Join(feats, " · ")) + " "
+	}
+	return spread(left, right, m.width)
+}
+
+// renderOutputFooter is the status line at the bottom of the output
+// panel: follow/run state on the left, contextual hints on the right.
+func (m Model) renderOutputFooter(width int) string {
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	if m.activeJob == nil {
+		return dim.Render(" idle")
+	}
+	status, _, duration := m.activeJob.job.Snapshot()
+	follow := "following"
+	if !m.followTail {
+		follow = "paused"
+	}
+	d := duration.Round(time.Second)
+	state := fmt.Sprintf("%s %d:%02d", status, int(d.Minutes()), int(d.Seconds())%60)
+	left := dim.Render(" " + follow + " · " + state)
+	right := ""
+	if status == jobs.StatusRunning {
+		right = keyHint("i", "type into job") + dim.Render(" · ")
+	}
+	right += keyHint("/", "search") + dim.Render(" · ") + keyHint("y", "copy") + " "
+	return spread(left, right, width)
+}
+
+func keyHint(k, desc string) string {
+	return lipgloss.NewStyle().Bold(true).Foreground(colorAmber).Render(k) +
+		lipgloss.NewStyle().Foreground(colorTextDim).Render(" "+desc)
 }
 
 func (m Model) renderFormModal() string {
 	width, height := m.formDims()
-	previewStyle := lipgloss.NewStyle().Foreground(colorTextDim)
-	content := previewStyle.Render(m.activeForm.preview()) + "\n\n" + m.activeForm.form.View()
-	return renderPanel("Params: "+m.activeForm.cmd.Name, content, width, height, true)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	inner := max(1, width-2)
+
+	// Description and preview both wrap to the modal's width, so their
+	// heights vary; the form gets whatever is left. huh pads its form to
+	// the height it's given, so it must be sized from the real line
+	// counts each render, or the preview box at the bottom gets clipped.
+	var head string
+	headLines := 0
+	if d := m.activeForm.cmd.Desc; d != "" {
+		head = dim.Render(ansi.Wrap(d, max(1, inner-2), "")) + "\n\n"
+		headLines = strings.Count(head, "\n")
+	}
+	previewText := ansi.Wrap(m.activeForm.preview(), max(1, width-8), "")
+	previewBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(colorMuted).
+		Padding(0, 1).Width(max(1, width-6)).
+		Render(dim.Render(previewText))
+	boxLines := strings.Count(previewBox, "\n") + 1
+
+	// borders + blank line above the box + huh's trailing line
+	formH := max(3, height-2-headLines-boxLines-2)
+	m.activeForm.form = m.activeForm.form.WithWidth(inner).WithHeight(formH)
+
+	content := head + m.activeForm.form.View() + "\n\n" + previewBox
+	return renderPanel(m.activeForm.cmd.Name, content, width, height, true)
 }
 
 func (m Model) renderPromptModal() string {
 	width, height := m.promptDims()
 	pending, _ := m.activeJob.job.Buffer.PendingLine()
-	questionStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
-	content := questionStyle.Render(pending) + "\n\n" + m.promptInput.View()
-	return renderPanel("Input requested: "+m.activeJob.job.Name, content, width, height, true)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	inputBox := lipgloss.NewStyle().Background(colorSelBg).Padding(0, 1).Width(max(1, width-4))
+	content := lipgloss.NewStyle().Foreground(colorTextSoft).Render(pending) + "\n" +
+		inputBox.Render(m.promptInput.View()) + "\n" +
+		dim.Render("Detected: output paused without a newline")
+	return renderPanelColored(m.activeJob.job.Name+" · waiting for input", content, width, height, colorAmber)
 }
 
-func (m Model) renderList() string {
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(colorTextDim)
-	selectedStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+// rowMeta is the dim right-aligned annotation on a command row.
+func rowMeta(c config.ResolvedCommand) string {
+	switch {
+	case c.Mode == config.ModeBackground:
+		return "bg"
+	case len(c.Params) == 1:
+		return "1 param"
+	case len(c.Params) > 1:
+		return fmt.Sprintf("%d params", len(c.Params))
+	}
+	return ""
+}
+
+func (m Model) renderList(width int) string {
+	headerStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 	plainStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
+	dimStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 	filterStyle := lipgloss.NewStyle().Foreground(colorAccent)
+	selStyle := lipgloss.NewStyle().Background(colorSelBg).Foreground(lipgloss.Color("#ffffff"))
 
 	var b strings.Builder
 	if m.filtering || m.filterQuery != "" {
@@ -722,7 +919,7 @@ func (m Model) renderList() string {
 	if len(m.rows) == 0 {
 		msg := "  no matches"
 		if len(m.allRows) == 0 {
-			msg = "  no commands found\n\n  add scripts to\n  ~/.config/lazycast/scripts\n  or .lazycast/scripts\n  in this project"
+			msg = "  no commands found\n\n  add scripts to\n  ~/.config/lazycmd/scripts\n  or .lazycmd/scripts\n  in this project"
 		}
 		b.WriteString(plainStyle.Render(msg))
 		return b.String()
@@ -734,47 +931,72 @@ func (m Model) renderList() string {
 		}
 		switch {
 		case row.isHeader:
-			b.WriteString(headerStyle.Render(row.label))
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(headerStyle.Render(" " + strings.ToUpper(row.label)))
 		case i == m.cursor:
-			b.WriteString(selectedStyle.Render("› " + row.label))
+			line := spread(" ▸ "+row.label, rowMeta(row.cmd)+" ", width)
+			b.WriteString(selStyle.Width(width).Render(line))
 		default:
-			b.WriteString(plainStyle.Render("  " + row.label))
+			line := spread("   "+row.label, dimStyle.Render(rowMeta(row.cmd)+" "), width)
+			b.WriteString(plainStyle.Render(line))
 		}
 	}
 	return b.String()
 }
 
-func (m Model) renderJobsList() string {
+func jobIcon(tj *trackedJob, status jobs.Status) string {
+	switch {
+	case tj.needsInput:
+		return lipgloss.NewStyle().Foreground(colorAmber).Render("?")
+	case status == jobs.StatusRunning && tj.cmd.Mode == config.ModeBackground:
+		return lipgloss.NewStyle().Foreground(colorAccent).Render("●")
+	case status == jobs.StatusRunning:
+		return lipgloss.NewStyle().Foreground(colorBlue).Render("◐")
+	case status == jobs.StatusSucceeded:
+		return lipgloss.NewStyle().Foreground(colorAccent).Render("✓")
+	default:
+		return lipgloss.NewStyle().Foreground(colorRed).Render("✗")
+	}
+}
+
+func (m Model) renderJobsList(width int) string {
 	if len(m.jobs) == 0 {
-		return lipgloss.NewStyle().Foreground(colorTextSoft).Render("  no jobs yet")
+		return lipgloss.NewStyle().Foreground(colorTextDim).Render("  no jobs yet")
 	}
 
-	selectedStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 	plainStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
 	dimStyle := lipgloss.NewStyle().Foreground(colorTextDim)
-	badgeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	amberStyle := lipgloss.NewStyle().Foreground(colorAmber)
+	selStyle := lipgloss.NewStyle().Background(colorSelBg).Foreground(lipgloss.Color("#ffffff"))
 
 	var b strings.Builder
 	for i, tj := range m.jobs {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		marker := "  "
-		if tj == m.activeJob {
-			marker = "› "
-		}
-		nameStyle := plainStyle
-		if m.focus == focusJobs && i == m.jobsCursor {
-			nameStyle = selectedStyle
-		}
-		b.WriteString(nameStyle.Render(marker + tj.cmd.Name))
-		b.WriteByte('\n')
-
 		status, _, duration := tj.job.Snapshot()
-		detail := "    " + status.String() + " " + duration.Round(time.Second).String()
-		b.WriteString(dimStyle.Render(detail))
+		d := duration.Round(time.Second)
+		detail := fmt.Sprintf("%d:%02d", int(d.Minutes()), int(d.Seconds())%60)
+		if status != jobs.StatusRunning && d < time.Minute {
+			detail = d.String()
+		}
+		if tj.cmd.Mode == config.ModeBackground && status == jobs.StatusRunning {
+			detail = "bg " + detail
+		}
+		right := dimStyle.Render(detail + " ")
 		if tj.needsInput {
-			b.WriteString(" " + badgeStyle.Render("⚠ needs input"))
+			right = amberStyle.Render("needs input ")
+		}
+		line := spread(" "+jobIcon(tj, status)+" "+tj.cmd.Name, right, width)
+		switch {
+		case m.focus == focusJobs && i == m.jobsCursor:
+			b.WriteString(selStyle.Width(width).Render(line))
+		case tj == m.activeJob:
+			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line))
+		default:
+			b.WriteString(plainStyle.Render(line))
 		}
 	}
 	return b.String()
@@ -796,45 +1018,36 @@ func (m Model) runningJobCount() int {
 }
 
 func (m Model) renderKeyBar() string {
-	text := m.keyBarText()
-	// lipgloss's Width() wraps content that's too long rather than
-	// truncating it, which would make the key bar quietly consume a
-	// second screen row the height math never accounts for - throwing
-	// off bodyHeight for every panel and, on a narrow enough terminal,
-	// pushing the true top row off the bottom of the alt screen
-	// entirely. Truncating first keeps it to the one row it's budgeted.
-	text = ansi.Truncate(text, m.width, "…")
-	return lipgloss.NewStyle().Foreground(colorTextDim).Width(m.width).Render(text)
+	// Truncate rather than wrap: lipgloss's Width() would wrap an
+	// over-long bar onto a second row the height math never budgets,
+	// pushing the top of the screen off the alt screen.
+	text := ansi.Truncate(m.keyBarText(), m.width, "…")
+	return lipgloss.NewStyle().Width(m.width).Render(text)
+}
+
+// keyBar renders "key label" pairs as bold amber keys with dim labels.
+func keyBar(pairs ...string) string {
+	parts := make([]string, 0, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		parts = append(parts, keyHint(pairs[i], pairs[i+1]))
+	}
+	return " " + strings.Join(parts, "   ")
 }
 
 func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
-		return " tab/shift+tab move  enter next  esc cancel"
+		return keyBar("tab", "next field", "enter", "next/run", "esc", "cancel")
 	case m.promptActive:
-		return " type your answer  enter send  esc dismiss"
+		return keyBar("enter", "send", "esc", "dismiss, job keeps waiting")
 	case m.inputFocus:
-		return " input mode: keys go straight to the process  esc leave"
+		return keyBar("esc", "leave input mode") + lipgloss.NewStyle().Foreground(colorTextDim).Render("   keys go straight to the process")
 	case m.filtering:
-		return " type to filter  enter confirm  esc clear"
+		return keyBar("enter", "confirm", "esc", "clear")
 	case m.focus == focusJobs:
-		return " ↑/↓ select  enter view  x stop  r restart  tab focus  ? help  q quit"
+		return keyBar("↑/↓", "select", "enter", "view", "x", "stop", "r", "restart", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	}
-
-	status := "idle"
-	if m.activeJob != nil {
-		if s, _, _ := m.activeJob.job.Snapshot(); s == jobs.StatusRunning {
-			status = "running"
-		}
-	}
-	if bg := m.runningJobCount(); bg > 0 {
-		status = fmt.Sprintf("%s, %d background", status, bg)
-	}
-	hint := " ↑/↓ select  enter run  t terminal  tab focus  / filter  ? help  q quit   [%s]"
-	if m.focus == focusOutput && m.activeJob != nil {
-		hint = " ↑/↓ select  enter run  t terminal  tab focus  i input  / filter  ? help  q quit   [%s]"
-	}
-	return fmt.Sprintf(hint, status)
+	return keyBar("enter", "run", "t", "terminal", "/", "filter", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 }
 
 func (m Model) renderHelp() string {
@@ -850,7 +1063,9 @@ func (m Model) renderHelp() string {
 			row("enter", "run the selected command") + "\n" +
 			row("t", "run it with a full terminal (vim, less, psql...)") + "\n" +
 			row("/", "filter by name") + "\n" +
-			row("tab", "switch focus between panels"),
+			row("tab", "next panel") + "\n" +
+			row("alt+1/2/3", "jump to Commands / Jobs / Output") + "\n" +
+			row("←/→", "previous / next panel"),
 
 		title.Render("Output panel") + "\n" +
 			row("↑/↓, pgup/pgdn", "scroll (breaks follow-tail until you reach the bottom)") + "\n" +

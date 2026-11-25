@@ -1,4 +1,4 @@
-# Lazycast: plan
+# Lazycmd: plan
 
 A lazygit-style TUI for running scripts. It has global and per-project commands, context-aware menus (pom, package.json, Vite config), huh forms for parameters, streaming output in a large panel, background jobs, and interactive prompts handled inside the app.
 
@@ -8,8 +8,8 @@ Design mock (main view, parameter form, prompt popup): https://claude.ai/artifac
 
 - **Stack:** Go with Bubble Tea, bubbles, lipgloss and huh. Also `creack/pty` for running commands and `charmbracelet/x/ansi` for ANSI-aware wrapping. Chosen over Ink for startup time and a single static binary.
 - **Config is YAML**, decoded strictly so typos are errors, with a JSON Schema published for editor validation and autocomplete.
-- **Plain scripts work with zero config.** A script can be "upgraded" by a sidecar `<script>.lazycast.yaml` file next to it that describes its form.
-- **Projects have YAML** in `.lazycast/`.
+- **Plain scripts work with zero config.** A script can be "upgraded" by a sidecar `<script>.lazycmd.yaml` file next to it that describes its form.
+- **Projects have YAML** in `.lazycmd/`.
 - **Features (maven, npm, vite, git) are opt-in providers** that emit the same command spec as the YAML files. There is one code path from spec to huh form, whether the spec came from a project file, a sidecar or a feature.
 - **Output goes through a PTY, not pipes**, so tools keep colors and progress bars and prompts reach us.
 - **Interactive programs:** the long-term answer is a terminal emulator in the output panel. Simple prompts get a popup first. Detecting zellij or tmux and opening a pane was considered and dropped.
@@ -20,42 +20,45 @@ Design mock (main view, parameter form, prompt popup): https://claude.ai/artifac
 Top to bottom, as in the mock:
 
 1. **Global**: all global scripts in one group, with the ones used most in the current project first, then the rest.
-2. **This project**: scripts and commands from `.lazycast/`.
+2. **This project**: scripts and commands from `.lazycmd/`.
 3. **Discovered**: one group per enabled feature (Maven, NPM, Vite, git), each labelled with its source file.
 
 Rules:
 - A project command shadows a global command with the same name.
 - Feature commands are namespaced (`maven: test`, `npm: lint`) so they never collide with scripts.
-- "Used most here" comes from a small usage log, keyed by repo root and a stable command id (`global:deploy-staging`, `maven:test`). It lives in `~/.local/state/lazycast/` and uses a decayed count, so recent runs weigh more and old favourites don't stick.
+- "Used most here" comes from a small usage log, keyed by repo root and a stable command id (`global:deploy-staging`, `maven:test`). It lives in `~/.local/state/lazycmd/` and uses a decayed count, so recent runs weigh more and old favourites don't stick.
 - `/` filters across all groups.
 
 ## Files and layout
 
 ```
-~/.config/lazycast/
+~/.config/lazycmd/
   config.yaml              # global settings, enabled features
   scripts/
     clean-docker.sh        # plain script: works with no config
     deploy-staging.sh
-    deploy-staging.lazycast.yaml   # sidecar: upgrades the script with a form
+    deploy-staging.lazycmd.yaml   # sidecar: upgrades the script with a form
 
-<repo>/.lazycast/
+~/.config/lazycmd/projects/
+  vandag.yaml              # central per-repo profile (see "Project profiles")
+
+<repo>/.lazycmd/
   config.yaml              # features for this repo, feature settings
   commands.yaml            # project command specs
   scripts/
     cloud-sql-proxy.sh
-    cloud-sql-proxy.lazycast.yaml
+    cloud-sql-proxy.lazycmd.yaml
 ```
 
 - A plain executable in a `scripts/` dir becomes a command named after the file, with no params.
-- A sidecar `<script>.lazycast.yaml` adds description, params and mode to that script. The `.lazycast.yaml` suffix keeps it from colliding with unrelated YAML files.
+- A sidecar `<script>.lazycmd.yaml` adds description, params and mode to that script. The `.lazycmd.yaml` suffix keeps it from colliding with unrelated YAML files.
 - `commands.yaml` holds commands that are inline (`run:`) or that point at a script (`script:`) and carry their own spec.
 ## Command spec
 
 One schema, used by project files, sidecars and features:
 
 ```yaml
-# .lazycast/commands.yaml
+# .lazycmd/commands.yaml
 commands:
   cloud-sql-proxy:
     desc: Start the Cloud SQL proxy
@@ -83,7 +86,7 @@ commands:
 A sidecar is the same spec for a single script, without the `commands:` wrapper:
 
 ```yaml
-# deploy-staging.lazycast.yaml  (next to deploy-staging.sh)
+# deploy-staging.lazycmd.yaml  (next to deploy-staging.sh)
 desc: Deploy to staging
 params:
   - { name: service, type: select, options_cmd: ls services }
@@ -109,7 +112,7 @@ params:
 
 ### Safety
 
-- Opening lazycast in a repo executes nothing from that repo's config. Features only parse files (pom, package.json) and never invoke `mvn` or `npm` to discover commands.
+- Opening lazycmd in a repo executes nothing from that repo's config. Features only parse files (pom, package.json) and never invoke `mvn` or `npm` to discover commands.
 - `options_cmd` and scripts run only after the user selects a command.
 - Params go in as env vars to avoid quoting problems and injection from unusual values.
 
@@ -123,6 +126,29 @@ params:
   1. **Focus mode.** Forward keys to the PTY (runes as-is, Enter as `\r`, arrows as escape sequences, Ctrl-C as `\x03`). A reserved key leaves the mode.
   2. **Prompt detection.** Output pauses without a trailing newline for ~300 ms and the tail looks like a prompt (`[y/N]`, `?`, `:`). Open a popup with a `textinput`. Check the PTY's `ECHO` flag via `x/sys/unix` to mask passwords. Background jobs get a "needs input" badge instead of stealing focus.
   3. **Embedded terminal emulator** for full-screen programs (`vim`, `less`, `psql`). Evaluate Charm's `x/vt` and community components before committing. Keep `tea.ExecProcess` (suspend and resume) as the fallback.
+
+## Project profiles
+
+`~/.config/lazycmd/projects/<name>.yaml` is a per-repo profile kept outside the repo, so nothing has to be committed to a project:
+
+```yaml
+path: ~/repos/vandag            # or paths: [...]; with no path, the file name must equal the repo folder name
+include:                        # extra commands for "This project"
+  - ~/shared/db/migrate.lazycmd.yaml   # sidecar (script beside it)
+  - ~/shared/tools/commands.yaml       # commands.yaml-shaped file
+  - ~/shared/scripts                   # folder of scripts
+defaults:                       # preselected form values, for any command (global, project, feature)
+  deploy-staging: { env: staging }
+  "maven: test": { module: api, also_make: true }
+  deploy: { env: staging, service: "${env}-api" }   # ${param} refers to another param's default
+disable: [git]                  # plus features:/maven:/... like config.yaml
+```
+
+- Matched by path (the repo or any folder below a listed path); first match in file-name order wins. Invalid files are warnings, never fatal.
+- `defaults` only preselect; the user can still change them. `${param}` references resolve once, when the form opens, from the other param's default (they chain; cycles and unknown names are warnings). They don't follow what the user later types.
+- Unknown commands/params and select values outside the options are warnings.
+- Layering for feature settings: global `config.yaml`, then the profile, then the repo's own `.lazycmd/config.yaml`.
+- The repo's own `.lazycmd/` commands win over an included command with the same name.
 
 ## Features
 
@@ -143,7 +169,7 @@ type Feature interface {
 | vite | `vite.config.*` | `dev` and `preview` (background), `build` |
 | git | `.git` | fetch and prune, stashes, worktrees, actions on the current branch |
 
-- Features are enabled in `config.yaml` (global adds to project), with feature settings such as `maven.default_profile`.
+- Features are on by default and show only when their files are detected (parsing only, nothing executes). `config.yaml` can turn some off (`disable: [git]`), re-enable them (`features: [git]`) and set feature settings such as `maven.default_profile`. Global is applied first, then the project.
 - Later, optional: external features as executables that print specs for a `list` call, so they can be written in any language.
 
 ## Build order
@@ -172,4 +198,4 @@ type Feature interface {
 ## Open questions
 - Whether to keep `mode: background` as an explicit field or infer it from long-running commands.
 - Format for the usage log (JSON file vs SQLite).
-- Name: a GitHub project called "lazycast" already exists (a wireless display receiver), so check Homebrew and module paths. A short binary alias such as `lc` is worth picking.
+- ~~Name~~ Resolved: renamed from "lazycast" (clashes with an existing GitHub project) to **lazycmd**, with `lc` as the short alias. Still worth checking Homebrew and the GitHub org/module path before publishing.

@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/lazycmd/lazycmd/main/schema/lazycmd-config.schema.json",
+  "title": "lazycmd config.yaml",
+  "description": "Global (~/.config/lazycmd/config.yaml) or project (.lazycmd/config.yaml) settings: per-feature settings, and which features to turn off. Every feature is on by default and only shows when its files (pom.xml, package.json, vite config, .git) are detected. Project files are applied after the global one; their settings override the global ones key by key. Keep in sync with internal/config/features_config.go. Reference from a YAML file with:\n  # yaml-language-server: $schema=../schema/lazycmd-config.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "features": {
+      "type": "array",
+      "description": "Switch features back on that a broader file disabled.",
+      "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }
+    },
+    "disable": {
+      "type": "array",
+      "description": "Features to turn off.",
+      "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }
+    },
+    "maven": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "default_profile": { "type": "string", "description": "Preselected value for the profile param on every maven: command." }
+      }
+    },
+    "npm": { "type": "object", "additionalProperties": { "type": "string" } },
+    "vite": { "type": "object", "additionalProperties": { "type": "string" } },
+    "git": { "type": "object", "additionalProperties": { "type": "string" } }
+  }
+}

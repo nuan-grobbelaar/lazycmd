@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"lazycast/internal/config"
-	"lazycast/internal/jobs"
+	"lazycmd/internal/config"
+	"lazycmd/internal/jobs"
 )
 
 // trackedJob pairs a running or finished job with the UI-only state

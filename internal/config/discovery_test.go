@@ -61,7 +61,7 @@ func TestPlainScriptNeedsNoConfig(t *testing.T) {
 func TestSidecarUpgradesScript(t *testing.T) {
 	root := t.TempDir()
 	writeExecutable(t, filepath.Join(root, "scripts", "deploy-staging.sh"))
-	writeFile(t, filepath.Join(root, "scripts", "deploy-staging.lazycast.yaml"), `
+	writeFile(t, filepath.Join(root, "scripts", "deploy-staging.lazycmd.yaml"), `
 desc: Deploy to staging
 params:
   - { name: service, type: select, options_cmd: "ls services" }
@@ -86,7 +86,7 @@ params:
 func TestBadSidecarIsSkippedWithWarning(t *testing.T) {
 	root := t.TempDir()
 	writeExecutable(t, filepath.Join(root, "scripts", "broken.sh"))
-	writeFile(t, filepath.Join(root, "scripts", "broken.lazycast.yaml"), `
+	writeFile(t, filepath.Join(root, "scripts", "broken.lazycmd.yaml"), `
 desc: Broken
 typo_field: true
 `)

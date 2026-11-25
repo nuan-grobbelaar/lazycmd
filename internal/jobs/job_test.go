@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 func writeExecutable(t *testing.T, path, script string) {
@@ -205,5 +205,28 @@ func TestStatusString(t *testing.T) {
 		if got := status.String(); got != want {
 			t.Errorf("Status(%d).String() = %q, want %q", status, got, want)
 		}
+	}
+}
+
+func TestJobOutputNeverContainsScreenControl(t *testing.T) {
+	cmd := config.ResolvedCommand{
+		Name: "noisy",
+		Run:  `printf '\033[2J\033[3J\033[H\033[1;32mvite\033[0m ready\tin 5ms\n\033[1A\033[2K\033]0;title\007\033[?25l done\n'`,
+	}
+	j, err := Start("noisy", cmd, nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if status, _, _ := j.Snapshot(); status != StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _ := j.Buffer.Snapshot()
+	want := "\x1b[1;32mvite\x1b[0m ready      in 5ms\n done\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

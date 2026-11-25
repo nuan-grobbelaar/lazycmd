@@ -8,24 +8,38 @@ import (
 )
 
 var (
-	colorAccent   = lipgloss.Color("63")  // focused border / highlight
-	colorMuted    = lipgloss.Color("240") // unfocused border
-	colorTextDim  = lipgloss.Color("244")
-	colorTextSoft = lipgloss.Color("252")
+	// Palette from the design mock (hex; terminals without truecolor
+	// get lipgloss's nearest-colour downsampling).
+	colorAccent   = lipgloss.Color("#8be0b0") // focus: borders, titles, success
+	colorMuted    = lipgloss.Color("#363c50") // unfocused border
+	colorTextDim  = lipgloss.Color("#8a93a8")
+	colorTextSoft = lipgloss.Color("#d5dbe8")
+	colorAmber    = lipgloss.Color("#f5c26b") // keys, brand, needs-input
+	colorRed      = lipgloss.Color("#ff8294")
+	colorBlue     = lipgloss.Color("#86b6ff")
+	colorSelBg    = lipgloss.Color("#232a3d") // selected-row background
 
-	titleFocusedStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	titleUnfocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorTextDim)
+	titleFocusedStyle   = lipgloss.NewStyle().Foreground(colorAccent)
+	titleUnfocusedStyle = lipgloss.NewStyle().Foreground(colorTextDim)
 )
 
 // renderPanel draws a box with the title cut into the top border, e.g.
 // "╭─ [1] Commands ───────╮", since lipgloss has no built-in support for
 // this. width/height are the box's outer dimensions, including borders.
 func renderPanel(title, body string, width, height int, focused bool) string {
-	borderColor := colorMuted
-	titleStyle := titleUnfocusedStyle
 	if focused {
-		borderColor = colorAccent
-		titleStyle = titleFocusedStyle
+		return renderPanelColored(title, body, width, height, colorAccent)
+	}
+	return renderPanelColored(title, body, width, height, colorMuted)
+}
+
+// renderPanelColored is renderPanel with an explicit border colour (the
+// amber input popup uses it). The title takes the border colour when
+// that colour is not the muted unfocused one.
+func renderPanelColored(title, body string, width, height int, borderColor lipgloss.Color) string {
+	titleStyle := titleFocusedStyle.Foreground(borderColor)
+	if borderColor == colorMuted {
+		titleStyle = titleUnfocusedStyle
 	}
 	border := lipgloss.NewStyle().Foreground(borderColor)
 

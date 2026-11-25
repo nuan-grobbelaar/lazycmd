@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 // This exercises a genuinely concurrent path: huh evaluates an
@@ -41,5 +41,16 @@ func TestParamsFormOptionsCmdLoadsAsynchronously(t *testing.T) {
 	view := m.activeForm.form.View()
 	if !strings.Contains(view, "svc-a") || !strings.Contains(view, "svc-b") {
 		t.Fatalf("expected the options_cmd-backed select to have loaded its options, got view:\n%s", view)
+	}
+}
+
+func TestMultiParamDefaultPreselects(t *testing.T) {
+	cmd := config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{
+		{Name: "features", Type: config.ParamMulti, Options: []string{"logging", "metrics", "tracing"}, Default: "logging,tracing"},
+	}}
+	pf := newParamsForm(cmd, t.TempDir())
+	pf.form.Init()
+	if got := pf.values()["features"]; got != "logging,tracing" {
+		t.Errorf("features = %q, want the default preselected", got)
 	}
 }

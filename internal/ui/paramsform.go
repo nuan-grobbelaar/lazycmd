@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/huh"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 const optionsCmdTimeout = 5 * time.Second
@@ -140,7 +140,18 @@ func (pf *paramsForm) attachSelectOptions(field *huh.Select[string], p config.Pa
 
 func (pf *paramsForm) attachMultiOptions(field *huh.MultiSelect[string], p config.Param) {
 	if p.OptionsCmd == "" {
-		field.Options(toOptions(p.Options)...)
+		opts := toOptions(p.Options)
+		// Default is a comma-separated list of options to preselect.
+		if p.Default != "" {
+			want := map[string]bool{}
+			for _, d := range strings.Split(p.Default, ",") {
+				want[strings.TrimSpace(d)] = true
+			}
+			for i, o := range opts {
+				opts[i] = o.Selected(want[o.Value])
+			}
+		}
+		field.Options(opts...)
 		return
 	}
 	deps := pf.dependencyPointers(p.DependsOn)
@@ -257,6 +268,9 @@ func (pf *paramsForm) values() map[string]string {
 // this above the form and single-line keeps its height predictable.
 func (pf *paramsForm) preview() string {
 	values := pf.values()
+	if pf.cmd.Preview != nil {
+		return "$ " + pf.cmd.Preview(values)
+	}
 	if pf.cmd.Run != "" {
 		body := pf.cmd.Run
 		for name, val := range values {

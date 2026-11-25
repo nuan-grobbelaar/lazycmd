@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const maxScrollbackLines = 10000
@@ -16,6 +18,8 @@ type OutputBuffer struct {
 	lines     []string
 	current   []byte
 	pendingCR bool // last chunk ended in '\r'; its meaning depends on this chunk's first byte
+	esc       escState
+	csi       []byte // parameters of the CSI sequence being parsed
 	version   uint64
 	lastWrite time.Time
 }
@@ -42,7 +46,22 @@ func (b *OutputBuffer) Write(p []byte) {
 	}
 
 	for ; i < len(p); i++ {
+		if b.esc != escNone {
+			b.consumeEscape(p[i])
+			continue
+		}
 		switch c := p[i]; c {
+		case 0x1b:
+			b.esc = escStart
+		case '\t':
+			// Terminals expand tabs themselves, but the panel's width
+			// math can't, so a tab would shift every column after it
+			// and break the box borders. Expand to 8-column stops here.
+			col := ansi.StringWidth(string(b.current))
+			b.current = append(b.current, strings.Repeat(" ", 8-col%8)...)
+		case 0x00, 0x07, 0x08, 0x0b, 0x0c, 0x0e, 0x0f, 0x7f:
+			// bell, backspace, form feed and friends: nothing to draw,
+			// and some would move the real cursor.
 		case '\r':
 			switch {
 			case i+1 < len(p) && p[i+1] == '\n':
@@ -61,6 +80,76 @@ func (b *OutputBuffer) Write(p []byte) {
 	}
 	b.version++
 	b.lastWrite = time.Now()
+}
+
+type escState int
+
+const (
+	escNone   escState = iota
+	escStart           // saw ESC
+	escCSI             // inside ESC [ ... , collecting parameters
+	escString          // inside an OSC/DCS/APC/PM string, until BEL or ST
+	escStrEnd          // saw ESC inside a string; '\\' ends it
+	escSkip1           // ESC ( ) * + # : one more byte belongs to it
+)
+
+// consumeEscape advances the escape-sequence state machine by one byte.
+// Only SGR (colour/style, CSI ... m) survives into the buffer. Everything
+// else - cursor movement, screen/line erase, titles, mode switches - is
+// dropped: the buffer's text is later written verbatim onto the real
+// terminal inside the TUI, so a program's "clear screen" (vite dev does
+// this on every restart) would otherwise wipe the whole interface. The
+// parser keeps its state across Write calls because a sequence can be
+// split between two PTY reads.
+func (b *OutputBuffer) consumeEscape(c byte) {
+	switch b.esc {
+	case escStart:
+		switch c {
+		case '[':
+			b.esc = escCSI
+			b.csi = b.csi[:0]
+		case ']', 'P', 'X', '^', '_':
+			b.esc = escString
+		case '(', ')', '*', '+', '#':
+			b.esc = escSkip1
+		default:
+			b.esc = escNone // two-byte escape, e.g. ESC 7 / ESC c
+		}
+	case escSkip1:
+		b.esc = escNone
+	case escString:
+		switch c {
+		case 0x07:
+			b.esc = escNone
+		case 0x1b:
+			b.esc = escStrEnd
+		}
+	case escStrEnd:
+		b.esc = escNone
+	case escCSI:
+		switch {
+		case c >= 0x30 && c <= 0x3f, c >= 0x20 && c <= 0x2f:
+			b.csi = append(b.csi, c) // parameter / intermediate byte
+		case c >= 0x40 && c <= 0x7e:
+			if c == 'm' && isSGRParams(b.csi) {
+				b.current = append(b.current, "\x1b["...)
+				b.current = append(b.current, b.csi...)
+				b.current = append(b.current, 'm')
+			}
+			b.esc = escNone
+		default:
+			b.esc = escNone // malformed: abandon it
+		}
+	}
+}
+
+func isSGRParams(p []byte) bool {
+	for _, c := range p {
+		if (c < '0' || c > '9') && c != ';' && c != ':' {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *OutputBuffer) commitLine() {

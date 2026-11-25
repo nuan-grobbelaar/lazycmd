@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 // pumpUntil drives m the way the real bubbletea runtime does: a cmd

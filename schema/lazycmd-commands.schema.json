@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/lazycast/lazycast/main/schema/lazycast-commands.schema.json",
-  "title": "lazycast command spec",
-  "description": "The one command spec shape shared by a project's commands.yaml and a <script>.lazycast.yaml sidecar. Keep in sync with internal/config/spec.go. Reference from a YAML file with:\n  # yaml-language-server: $schema=../schema/lazycast-commands.schema.json",
+  "$id": "https://raw.githubusercontent.com/lazycmd/lazycmd/main/schema/lazycmd-commands.schema.json",
+  "title": "lazycmd command spec",
+  "description": "The one command spec shape shared by a project's commands.yaml and a <script>.lazycmd.yaml sidecar. Keep in sync with internal/config/spec.go. Reference from a YAML file with:\n  # yaml-language-server: $schema=../schema/lazycmd-commands.schema.json",
   "definitions": {
     "param": {
       "type": "object",

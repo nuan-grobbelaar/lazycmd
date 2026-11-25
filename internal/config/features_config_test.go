@@ -5,43 +5,53 @@ import (
 	"testing"
 )
 
-func TestEnabledFeaturesMergesGlobalAndProject(t *testing.T) {
+func TestEnabledFeaturesSettingsMerge(t *testing.T) {
 	global := t.TempDir()
 	writeFile(t, filepath.Join(global, "config.yaml"), `
-features: [maven, git]
 maven:
   default_profile: dev
 `)
 	project := t.TempDir()
 	writeFile(t, filepath.Join(project, "config.yaml"), `
-features: [npm]
 maven:
   default_profile: ci
 `)
 
-	enabled, settings, warnings := EnabledFeatures(global, project)
+	_, settings, warnings := EnabledFeatures(global, project)
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
-	}
-	for _, name := range []string{"maven", "git", "npm"} {
-		if !enabled[name] {
-			t.Errorf("expected %q enabled, got %v", name, enabled)
-		}
-	}
-	if enabled["vite"] {
-		t.Error("vite should not be enabled")
 	}
 	if settings["maven"]["default_profile"] != "ci" {
 		t.Errorf("maven.default_profile = %q, want project override \"ci\"", settings["maven"]["default_profile"])
 	}
 }
 
-func TestEnabledFeaturesNoFilesIsFine(t *testing.T) {
+func TestEnabledFeaturesDisableAndReenable(t *testing.T) {
+	global := t.TempDir()
+	writeFile(t, filepath.Join(global, "config.yaml"), "disable: [git, vite]\n")
+	project := t.TempDir()
+	writeFile(t, filepath.Join(project, "config.yaml"), "features: [vite]\ndisable: [maven]\n")
+
+	enabled, _, warnings := EnabledFeatures(global, project)
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	want := map[string]bool{"maven": false, "npm": true, "vite": true, "git": false}
+	for name, on := range want {
+		if enabled[name] != on {
+			t.Errorf("enabled[%q] = %v, want %v (all: %v)", name, enabled[name], on, enabled)
+		}
+	}
+}
+
+func TestEnabledFeaturesAllOnByDefault(t *testing.T) {
 	enabled, _, warnings := EnabledFeatures(t.TempDir(), t.TempDir())
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
-	if len(enabled) != 0 {
-		t.Errorf("expected no enabled features, got %v", enabled)
+	for _, name := range AllFeatures {
+		if !enabled[name] {
+			t.Errorf("%q should be on by default, got %v", name, enabled)
+		}
 	}
 }

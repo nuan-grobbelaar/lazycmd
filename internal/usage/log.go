@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"lazycast/internal/config"
+	"lazycmd/internal/config"
 )
 
 // halfLife is how long it takes a command's usage score to decay by
