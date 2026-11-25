@@ -461,3 +461,181 @@ func TestNpmWorkspaceScriptNameIsNotShellCode(t *testing.T) {
 		t.Errorf("workspace argv = %q", got)
 	}
 }
+
+func findCmd(t *testing.T, cmds []config.ResolvedCommand, name string) config.ResolvedCommand {
+	t.Helper()
+	for _, c := range cmds {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("command %q not found", name)
+	return config.ResolvedCommand{}
+}
+
+func paramByName(c config.ResolvedCommand, name string) *config.Param {
+	for i := range c.Params {
+		if c.Params[i].Name == name {
+			return &c.Params[i]
+		}
+	}
+	return nil
+}
+
+const springPlugin = `<build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>`
+
+func TestMavenSpringBootRunInModule(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project>
+  <modules><module>core</module><module>services</module></modules>
+  <profiles><profile><id>local</id></profile></profiles>
+</project>`)
+	writeFile(t, filepath.Join(root, "core", "pom.xml"), `<project></project>`)
+	writeFile(t, filepath.Join(root, "services", "pom.xml"), `<project><modules><module>web</module><module>worker</module></modules></project>`)
+	writeFile(t, filepath.Join(root, "services", "web", "pom.xml"), `<project>`+springPlugin+`</project>`)
+	writeFile(t, filepath.Join(root, "services", "worker", "pom.xml"), `<project></project>`)
+
+	cmds, err := Maven{}.Commands(root, map[string]string{"default_profile": "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := findCmd(t, cmds, "maven: spring-boot:run")
+
+	mod := paramByName(run, "module")
+	if mod == nil || len(mod.Options) != 1 || mod.Options[0] != "services/web" || !mod.Required || mod.Default != "services/web" {
+		t.Fatalf("module param = %+v, want only services/web, required, preselected", mod)
+	}
+	if p := paramByName(run, "profile"); p == nil || p.Default != "local" {
+		t.Errorf("profile param = %+v, want Maven profiles with default_profile", p)
+	}
+	if paramByName(run, "also_make") != nil {
+		t.Error("spring-boot:run offers also_make; -am would start upstream modules too")
+	}
+	if paramByName(run, "spring_profiles") == nil {
+		t.Error("spring-boot:run has no spring_profiles param")
+	}
+
+	got := runWithStub(t, "mvn", run.Run, map[string]string{
+		"LC_MODULE": "services/web", "LC_PROFILE": "local", "LC_SPRING_PROFILES": "dev,debug",
+	})
+	if want := "-pl services/web -Plocal -Dspring-boot.run.profiles=dev,debug spring-boot:run"; got != want {
+		t.Errorf("mvn argv = %q, want %q", got, want)
+	}
+	got = runWithStub(t, "mvn", run.Run, map[string]string{"LC_MODULE": "services/web"})
+	if want := "-pl services/web spring-boot:run"; got != want {
+		t.Errorf("mvn argv without profiles = %q, want %q", got, want)
+	}
+
+	prev := run.Preview(map[string]string{"module": "services/web", "spring_profiles": "dev"})
+	if prev != "mvn spring-boot:run -pl services/web -Dspring-boot.run.profiles=dev" {
+		t.Errorf("preview = %q", prev)
+	}
+}
+
+func TestMavenRunGoalDeclaredAtRoot(t *testing.T) {
+	// Single-module app: no module picker, runs at the root.
+	single := t.TempDir()
+	writeFile(t, filepath.Join(single, "pom.xml"), `<project>`+springPlugin+`</project>`)
+	cmds, _ := Maven{}.Commands(single, nil)
+	run := findCmd(t, cmds, "maven: spring-boot:run")
+	if paramByName(run, "module") != nil {
+		t.Errorf("single-module params = %+v, want no module picker", run.Params)
+	}
+	if got := runWithStub(t, "mvn", run.Run, nil); got != "spring-boot:run" {
+		t.Errorf("mvn argv = %q", got)
+	}
+
+	// Parent declares it: children inherit it, so every module is offered.
+	parent := t.TempDir()
+	writeFile(t, filepath.Join(parent, "pom.xml"), `<project><modules><module>a</module><module>b</module></modules>`+springPlugin+`</project>`)
+	writeFile(t, filepath.Join(parent, "a", "pom.xml"), `<project></project>`)
+	writeFile(t, filepath.Join(parent, "b", "pom.xml"), `<project></project>`)
+	cmds, _ = Maven{}.Commands(parent, nil)
+	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
+	if mod == nil || strings.Join(mod.Options, ",") != "a,b" {
+		t.Errorf("module param = %+v, want a,b", mod)
+	}
+}
+
+func TestMavenRunGoalsOnlyWhenDeclared(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project>
+  <modules><module>app</module></modules>
+  <build><pluginManagement><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></pluginManagement></build>
+</project>`)
+	writeFile(t, filepath.Join(root, "app", "pom.xml"), `<project><build><plugins>
+  <plugin><artifactId>quarkus-maven-plugin</artifactId></plugin>
+  <plugin><artifactId>jetty-maven-plugin</artifactId></plugin>
+</plugins></build></project>`)
+
+	ns := names(t, Maven{}, root, nil)
+	if contains(ns, "maven: spring-boot:run") {
+		t.Error("pluginManagement alone offered spring-boot:run")
+	}
+	for _, want := range []string{"maven: quarkus:dev", "maven: jetty:run"} {
+		if !contains(ns, want) {
+			t.Errorf("%s missing from %v", want, ns)
+		}
+	}
+
+	cmds, _ := Maven{}.Commands(root, nil)
+	dev := findCmd(t, cmds, "maven: quarkus:dev")
+	got := runWithStub(t, "mvn", dev.Run, map[string]string{"LC_MODULE": "app", "LC_QUARKUS_PROFILE": "test"})
+	if got != "-pl app -Dquarkus.profile=test quarkus:dev" {
+		t.Errorf("quarkus argv = %q", got)
+	}
+	if jetty := findCmd(t, cmds, "maven: jetty:run"); len(jetty.Params) != 1 {
+		t.Errorf("jetty params = %+v, want just module", jetty.Params)
+	}
+
+	// No plugin anywhere: no run goals at all.
+	plain := t.TempDir()
+	writeFile(t, filepath.Join(plain, "pom.xml"), `<project><modules><module>x</module></modules></project>`)
+	writeFile(t, filepath.Join(plain, "x", "pom.xml"), `<project></project>`)
+	for _, n := range names(t, Maven{}, plain, nil) {
+		if strings.Contains(n, ":run") || strings.Contains(n, ":dev") {
+			t.Errorf("unexpected run goal %q", n)
+		}
+	}
+}
+
+func TestMavenModulesStayInsideRepo(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "pom.xml"), `<project>`+springPlugin+`</project>`)
+
+	root := t.TempDir()
+	rel, err := filepath.Rel(root, outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project><modules>
+  <module>`+filepath.ToSlash(rel)+`</module>
+  <module>`+outside+`</module>
+  <module>missing</module>
+  <module>./ok/</module>
+  <module>ok</module>
+</modules></project>`)
+	writeFile(t, filepath.Join(root, "ok", "pom.xml"), `<project>`+springPlugin+`</project>`)
+	writeFile(t, filepath.Join(root, "ok", "pom.xml"), `<project><modules><module>../ok</module></modules>`+springPlugin+`</project>`)
+
+	cmds, err := Maven{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
+	if mod == nil || strings.Join(mod.Options, ",") != "ok" {
+		t.Errorf("module options = %+v, want just ok (outside, missing and duplicate entries dropped)", mod)
+	}
+}
+
+func TestMavenModuleCycleTerminates(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>a</module></modules></project>`)
+	writeFile(t, filepath.Join(root, "a", "pom.xml"), `<project><modules><module>../a</module><module>b</module></modules></project>`)
+	writeFile(t, filepath.Join(root, "a", "b", "pom.xml"), `<project><modules><module>..</module></modules>`+springPlugin+`</project>`)
+	cmds, _ := Maven{}.Commands(root, nil)
+	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
+	if mod == nil || strings.Join(mod.Options, ",") != "a/b" {
+		t.Errorf("module options = %+v, want a/b", mod)
+	}
+}
