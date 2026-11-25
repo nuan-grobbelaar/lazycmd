@@ -8,6 +8,11 @@
   "properties": {
     "path": { "type": "string", "description": "Repo this profile is for. ~ is expanded; a relative path is relative to this file." },
     "paths": { "type": "array", "items": { "type": "string" }, "description": "Several repos sharing one profile." },
+    "confirm": {
+      "type": "object",
+      "description": "Ask before running these commands in this repo, keyed by command name or id as in defaults: true for 'Run <name>?', or the question with {param} placeholders. Adds or changes a confirm; false can't remove one.",
+      "additionalProperties": { "type": ["boolean", "string"] }
+    },
     "terminal": {
       "type": "array",
       "items": { "type": "string" },

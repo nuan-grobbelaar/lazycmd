@@ -1,4 +1,5 @@
 # Sidecar for deploy.sh: gives it a description, a form and arguments.
+confirm: "Deploy {services} to {env} ({region})?"
 desc: Pretend deploy (prints only). Shows select, multi, labelled options, bool, secret and args.
 params:
   - { name: env, type: select, options: [dev, staging, prod], default: dev }

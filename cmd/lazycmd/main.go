@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
+	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
 	"lazycmd/internal/features"
 	"lazycmd/internal/trust"
@@ -15,6 +17,12 @@ import (
 )
 
 func main() {
+	// `lazycmd ask` / `lazycmd pick`: a script asking a question, not
+	// the TUI. See package ask.
+	if len(os.Args) > 1 && (os.Args[1] == ask.KindAsk || os.Args[1] == ask.KindPick) {
+		os.Exit(ask.Main(os.Args[1], os.Args[2:], os.Stdin, term.IsTerminal(os.Stdin.Fd()), os.Stdout, os.Stderr))
+	}
+
 	globalDir, err := config.GlobalDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazycmd:", err)
@@ -69,6 +77,7 @@ func main() {
 		if profile != nil {
 			w = append(w, config.ApplyParamOverrides(groups, profile.File.Params)...)
 			w = append(w, config.ApplyTerminal(groups, profile.File.Terminal)...)
+			w = append(w, config.ApplyConfirm(groups, profile.File.Confirm)...)
 			w = append(w, config.ApplyDefaults(groups, profile.File.Defaults)...)
 		}
 		return groups, w
@@ -102,10 +111,21 @@ func main() {
 	if pending != nil {
 		model = model.WithPendingTrust(*pending)
 	}
+	// Questions from jobs (lazycmd ask/pick) arrive on this socket. If it
+	// can't be set up, scripts fall back to asking on a terminal.
+	srv, err := ask.NewServer(stateDir)
+	if err == nil {
+		model = model.WithAsk(srv)
+	} else {
+		model = model.WithWarning("lazycmd ask/pick popups are unavailable: " + err.Error())
+	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if m, ok := finalModel.(ui.Model); ok {
 		m.Shutdown()
+	}
+	if srv != nil {
+		srv.Close() // before any os.Exit, which would skip a defer
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazycmd:", err)

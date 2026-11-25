@@ -16,6 +16,8 @@ Opening lazycmd in a repo never executes anything from that repo's config. Comma
 - [Command spec](#command-spec)
 - [Params](#params)
 - [Passing params to a command](#passing-params-to-a-command)
+- [Asking before running: confirm](#asking-before-running-confirm)
+- [Asking questions from a script: lazycmd ask / pick](#asking-questions-from-a-script-lazycmd-ask--pick)
 - [Plain scripts and sidecars](#plain-scripts-and-sidecars)
 - [commands.yaml](#commandsyaml)
 - [config.yaml: features and settings](#configyaml-features-and-settings)
@@ -39,6 +41,7 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 | `enter` | Jobs | show that job in the Output panel |
 | `x` | Jobs | stop the job |
 | `r` | Jobs | restart it with the same params |
+| `?` before a job | Jobs | it's waiting for an answer (`lazycmd ask` / `pick`, or a prompt): view it to answer |
 | `i` | Output | focus mode: keys go straight to the running job; `esc` leaves |
 | `↑`/`↓`, `pgup`/`pgdn` | Output | scroll (scrolling up stops following; reaching the bottom resumes) |
 | `tab` | anywhere | next panel |
@@ -130,6 +133,7 @@ One shape is used everywhere: sidecars, `commands.yaml` entries and files a prof
 | `script` | string | path to a script (relative to the file that names it) |
 | `args` | list of strings | arguments for the script, see [below](#passing-params-to-a-command) |
 | `terminal` | bool | `enter` runs it with the real terminal, like `t`, for interactive programs (fzf, vim, psql). Shown as `⧉` in the list |
+| `confirm` | bool or string | ask before running: `true` for "Run <name>?", or the question with `{param}` placeholders. See [confirm](#asking-before-running-confirm) |
 
 In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it.
 
@@ -224,6 +228,42 @@ args: ["--env", "{env}", "--tag={tag}"]
 - Bools are `true`/`false`; `multi` values are comma-joined.
 - Only declared params may be used, and `args` needs a script. With `run:` it is an error. Use `"$LC_NAME"` in the shell body instead.
 - A `secret` param can't be used in `args`; the command is skipped with a warning. A program's arguments can be read by any user on the machine (`ps`), while its environment can only be read by you, so a script gets its secrets from `$LC_NAME`.
+
+## Asking before running: confirm
+
+For commands you don't want to run by accident:
+
+```yaml
+deploy:
+  script: ./scripts/deploy.sh
+  confirm: "Deploy {services} to {env}?"   # or confirm: true for "Run deploy?"
+```
+
+- The question comes **after** the form and **before** anything runs. `y` runs it. `n` / `esc` go back to the form with your answers kept, or just cancel for a command without params. **`enter` does nothing**, so a stray one can't run a deploy.
+- `{name}` is filled in from the answers. A `secret` shows as `••••••` and an empty answer as `(none)`. A placeholder that isn't a param of the command is an error.
+- It also asks on `.` / `R` re-runs and on `r` restarts in the Jobs panel.
+- A [profile](#project-profiles) can add a confirm to any command in one repo, including feature commands and global scripts: `confirm: { "npm: deploy": true }`. It can change a command's question, but can't remove one.
+
+## Asking questions from a script: lazycmd ask / pick
+
+A script can ask something mid-run. Inside lazycmd it opens a popup; anywhere else it asks on the terminal, so the same script works in both:
+
+```bash
+name=$(lazycmd ask "Release name?" --default "$(date +%F)") || exit 1
+token=$(lazycmd ask "Token?" --secret)
+module=$(find . -name pom.xml | lazycmd pick "Module?")
+for t in $(printf 'api\nweb\nworker\n' | lazycmd pick "Targets?" --multi); do echo "$t"; done
+```
+
+| | |
+|---|---|
+| `lazycmd ask PROMPT` | a line of text. `--default VALUE` pre-fills it; `--secret` hides what's typed |
+| `lazycmd pick PROMPT` | one of the lines on stdin. A line `VALUE<TAB>LABEL` shows the label and prints the value. `--multi` picks several, printed one per line |
+| exit code | `0` with the answer on stdout; `1` if cancelled (like fzf); `2` for a usage error |
+
+- **In the panel:** if the job is the one you're viewing, its question pops up straight away. Otherwise the job gets a `?` in the Jobs panel and waits, never taking focus away from what you're doing. View the job to answer. `esc` cancels (the script sees exit code 1). If the job is stopped while asking, the question goes away.
+- **Outside lazycmd**, including commands run with `t` or `terminal: true`, `ask` reads from the terminal (without echo for `--secret`), and `pick` uses [fzf](https://github.com/junegunn/fzf) if installed, otherwise a numbered list.
+- **How it works:** each panel job gets `LC_ASK_SOCK`, a socket in a private folder under the state dir (removed when lazycmd exits), and `LC_ASK_TOKEN`, a random token naming the job. Questions travel over that socket, not through the job's output, so nothing a program prints can open or imitate a popup. lazycmd's guess-the-prompt popup stays for programs that don't use `ask`.
 
 ## Plain scripts and sidecars
 
@@ -331,6 +371,7 @@ maven:
 | `path` / `paths` | the repo(s) this profile is for. `~` is expanded; a relative path is relative to the profile file. Matches the repo itself **or any folder below it** |
 | `include` | extra commands for "This project" |
 | `terminal` | list of commands (name or id, like `defaults`) that run with the real terminal on `enter` in this repo, e.g. a global script's sidecar that doesn't set it |
+| `confirm` | map of command (name or id) to `true` or a question: ask before running it in this repo. Adds or changes a confirm, never removes one |
 | `defaults` | preselected form values |
 | `params` | this repo's options and default for a `select` / `multi` param |
 | `features`, `disable`, `maven`, … | exactly as in [config.yaml](#configyaml-features-and-settings) |

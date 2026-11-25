@@ -70,12 +70,13 @@ func Start(id string, resolved config.ResolvedCommand, values map[string]string,
 // output panel's real size rather than 0x0. Zero means unsized. Panel
 // jobs also get LC_PANEL=1, so a script can tell it isn't in a real
 // terminal and choose a simpler mode.
-func StartSized(id string, resolved config.ResolvedCommand, values map[string]string, stateDir string, cols, rows int) (*Job, error) {
+func StartSized(id string, resolved config.ResolvedCommand, values map[string]string, stateDir string, cols, rows int, env ...string) (*Job, error) {
 	execCmd, err := BuildCmd(resolved, values)
 	if err != nil {
 		return nil, err
 	}
 	execCmd.Env = append(execCmd.Env, "LC_PANEL=1")
+	execCmd.Env = append(execCmd.Env, env...)
 
 	var ptmx *os.File
 	if ws := winsize(cols, rows); ws != nil {

@@ -42,6 +42,9 @@ type Command struct {
 	// Terminal runs the command with the real terminal on enter, the
 	// way t does, for interactive programs (fzf, vim, psql).
 	Terminal bool `yaml:"terminal,omitempty"`
+	// Confirm asks before running: true for "Run <name>?", or the
+	// question itself with {param} placeholders. See confirm.go.
+	Confirm ConfirmSpec `yaml:"confirm,omitempty"`
 }
 
 // CommandsFile is the root shape of a project's commands.yaml.

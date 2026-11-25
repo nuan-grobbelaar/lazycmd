@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
 	"lazycmd/internal/last"
@@ -97,6 +98,13 @@ type Model struct {
 	// whether the prompt asking that is on screen.
 	pendingTrust    *PendingTrust
 	trustPromptOpen bool
+
+	// confirm is the "really run?" question for a command with
+	// confirm:, shown after its form and before anything runs.
+	confirm *pendingConfirm
+
+	askServer *ask.Server // where jobs' lazycmd ask/pick questions arrive; nil without
+	askPopup  *askPopup   // the question being answered, if any
 
 	ready bool
 }
@@ -420,6 +428,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.activeForm != nil {
 		return m.updateActiveForm(msg)
 	}
+	if m.askPopup != nil {
+		return m.updateAskPopup(msg)
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -429,6 +440,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.trustPromptOpen {
 			return m.updateTrustPrompt(msg)
+		}
+		if m.confirm != nil {
+			return m.updateConfirm(msg)
 		}
 		if m.shadowConfirm != nil {
 			return m.updateShadowConfirm(msg)
@@ -508,15 +522,84 @@ func isRunNowKey(k tea.KeyMsg) bool {
 // submitForm closes the open form and runs its command with the current
 // answers, in the mode (panel job or real terminal) it was opened for.
 func (m Model) submitForm() (tea.Model, tea.Cmd) {
-	cmdSpec := m.activeForm.cmd
-	values := m.activeForm.values()
+	form := m.activeForm
+	cmdSpec := form.cmd
+	values := form.values()
 	mode := m.pendingRunMode
 	m.activeForm = nil
 	m.pendingRunMode = runPanel
+	return m.run(cmdSpec, mode, values, form)
+}
+
+// pendingConfirm is a run waiting for its confirm: question to be
+// answered: what to run, how, with which answers, and the form it came
+// from (nil if none), which "n" returns to with the answers kept.
+type pendingConfirm struct {
+	cmd    config.ResolvedCommand
+	mode   runMode
+	values map[string]string
+	form   *paramsForm
+}
+
+// run is the one way a command starts once its answers are known: a
+// command with confirm: asks first; then it runs as a panel job or with
+// the real terminal.
+func (m Model) run(cmdSpec config.ResolvedCommand, mode runMode, values map[string]string, form *paramsForm) (tea.Model, tea.Cmd) {
+	if cmdSpec.Confirm != "" {
+		m.confirm = &pendingConfirm{cmd: cmdSpec, mode: mode, values: values, form: form}
+		return m, nil
+	}
+	return m.launch(cmdSpec, mode, values)
+}
+
+// launch starts cmdSpec now, past every check.
+func (m Model) launch(cmdSpec config.ResolvedCommand, mode runMode, values map[string]string) (tea.Model, tea.Cmd) {
 	if mode == runTerminal {
 		return m.runInTerminal(cmdSpec, values)
 	}
 	return m.startJob(cmdSpec, values)
+}
+
+// updateConfirm answers the confirm question: y runs; n, esc or q goes
+// back to the form with the answers kept (or just cancels when there was
+// no form). enter does nothing, so a stray one can't run a deploy.
+func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	pc := m.confirm
+	switch msg.String() {
+	case "y", "Y":
+		m.confirm = nil
+		return m.launch(pc.cmd, pc.mode, pc.values)
+	case "ctrl+c":
+		return m, tea.Quit
+	case "n", "N", "esc", "q":
+		m.confirm = nil
+		if pc.form != nil {
+			pc.form.form.State = huh.StateNormal
+			m.activeForm = pc.form
+			m.pendingRunMode = pc.mode
+		}
+	}
+	return m, nil
+}
+
+func (m Model) renderConfirm() string {
+	pc := m.confirm
+	width := clampInt(64, 40, m.width-6)
+	inner := max(1, width-4)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	yellow := lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+
+	question := safetext.Line(config.ExpandConfirm(pc.cmd, pc.values))
+	back := "n/esc"
+	backDesc := "cancel"
+	if pc.form != nil {
+		backDesc = "back to the form"
+	}
+	content := yellow.Render(ansi.Wrap("⚠ "+question, inner, "")) + "\n\n" +
+		dim.Render(ansi.Wrap("enter does nothing here, so a stray one can't run it.", inner, "")) + "\n\n" +
+		keyBar("y", "run it", back, backDesc)
+	height := strings.Count(content, "\n") + 3
+	return renderPanelColored(pc.cmd.Name+" · confirm", content, width, height, colorYellow)
 }
 
 // updatePoll runs on every tick while any job is running: it checks
@@ -525,6 +608,7 @@ func (m Model) submitForm() (tea.Model, tea.Cmd) {
 // the output panel if the currently-displayed job has new content. Only
 // the active job's prompt ever pops the dialog and steals focus.
 func (m Model) updatePoll(msg pollMsg) (tea.Model, tea.Cmd) {
+	m.collectAsks()
 	anyRunning := false
 	for _, tj := range m.jobs {
 		status, _, _ := tj.job.Snapshot()
@@ -548,7 +632,9 @@ func (m Model) updatePoll(msg pollMsg) (tea.Model, tea.Cmd) {
 				m.viewport.GotoBottom()
 			}
 		}
-		if m.activeJob.needsInput && !m.promptActive && !m.inputFocus {
+		if cmd := m.maybeOpenAsk(); cmd != nil {
+			cmds = append(cmds, cmd)
+		} else if m.activeJob.needsInput && len(m.activeJob.asks) == 0 && !m.modalOpen() {
 			cmds = append(cmds, m.openPromptPopup())
 		}
 	}
@@ -796,7 +882,7 @@ func (m Model) updateJobsFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		if m.jobsCursor >= 0 && m.jobsCursor < len(m.jobs) {
 			tj := m.jobs[m.jobsCursor]
-			return m.startJob(tj.cmd, tj.values)
+			return m.run(tj.cmd, runPanel, tj.values, nil)
 		}
 	}
 	return m, nil
@@ -878,10 +964,7 @@ func (m Model) openOrRun(cmdSpec config.ResolvedCommand, mode runMode) (tea.Mode
 // them, saying why.
 func (m Model) openOrRunWith(cmdSpec config.ResolvedCommand, mode runMode, prev *last.Entry) (tea.Model, tea.Cmd) {
 	if len(cmdSpec.Params) == 0 {
-		if mode == runTerminal {
-			return m.runInTerminal(cmdSpec, nil)
-		}
-		return m.startJob(cmdSpec, nil)
+		return m.run(cmdSpec, mode, nil, nil)
 	}
 	notice := ""
 	if prev != nil {
@@ -891,10 +974,7 @@ func (m Model) openOrRunWith(cmdSpec config.ResolvedCommand, mode runMode, prev 
 			for _, p := range cmdSpec.Params {
 				values[p.Name] = prev.Values[p.Name]
 			}
-			if mode == runTerminal {
-				return m.runInTerminal(cmdSpec, values)
-			}
-			return m.startJob(cmdSpec, values)
+			return m.run(cmdSpec, mode, values, nil)
 		}
 		cmdSpec = withDefaults(cmdSpec, prev.Values)
 		notice = "filled in with your last answers; " + why
@@ -1013,13 +1093,14 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 		}
 	}
 
-	job, err := jobs.StartSized(id, cmdSpec, values, m.stateDir, m.viewport.Width, m.viewport.Height)
+	askEnv, askToken := m.askEnv(id)
+	job, err := jobs.StartSized(id, cmdSpec, values, m.stateDir, m.viewport.Width, m.viewport.Height, askEnv...)
 	if err != nil {
 		m.viewport.SetContent(fmt.Sprintf("failed to start %s: %v", cmdSpec.Name, err))
 		return m, nil
 	}
 
-	tj := &trackedJob{job: job, cmd: cmdSpec, values: values}
+	tj := &trackedJob{job: job, cmd: cmdSpec, values: values, askToken: askToken}
 	m.jobs = append(m.jobs, tj)
 	m.jobsCursor = len(m.jobs) - 1
 	m.switchToJob(tj)
@@ -1177,6 +1258,10 @@ func (m Model) View() string {
 		return overlayCentered(base, m.renderTrustPrompt(), m.width, m.height)
 	case m.activeForm != nil:
 		return overlayCentered(base, m.renderFormModal(), m.width, m.height)
+	case m.askPopup != nil:
+		return overlayCentered(base, m.renderAskPopup(), m.width, m.height)
+	case m.confirm != nil:
+		return overlayCentered(base, m.renderConfirm(), m.width, m.height)
 	case m.shadowConfirm != nil:
 		return overlayCentered(base, m.renderShadowConfirm(), m.width, m.height)
 	case m.promptActive:
@@ -1469,7 +1554,7 @@ func (m Model) renderList(width int) string {
 
 func jobIcon(tj *trackedJob, status jobs.Status) string {
 	switch {
-	case tj.needsInput:
+	case tj.needsInput || len(tj.asks) > 0:
 		return lipgloss.NewStyle().Foreground(colorAmber).Render("?")
 	case status == jobs.StatusRunning:
 		return lipgloss.NewStyle().Foreground(colorBlue).Render("◐")
@@ -1560,6 +1645,13 @@ func (m Model) keyBarText() string {
 		return keyBar(append(hints, "esc", "cancel")...)
 	case m.trustPromptOpen:
 		return keyBar("y", "allow this repo's commands", "n/esc", "not now")
+	case m.askPopup != nil:
+		if m.askPopup.p.Req.Kind == ask.KindPick {
+			return keyBar("enter", "answer", "/", "filter", "esc", "cancel (the script sees exit 1)")
+		}
+		return keyBar("enter", "answer", "esc", "cancel (the script sees exit 1)")
+	case m.confirm != nil:
+		return keyBar("y", "run it", "n/esc", "back")
 	case m.shadowConfirm != nil:
 		return keyBar("y", "run the project's version", "n/esc", "cancel")
 	case m.promptActive:
@@ -1631,7 +1723,8 @@ func (m Model) renderHelp() string {
 			row("↑/↓, j/k", "select a job") + "\n" +
 			row("enter", "view it in the output panel") + "\n" +
 			row("x", "stop it") + "\n" +
-			row("r", "restart it with the same params"),
+			row("r", "restart it with the same params") + "\n" +
+			row("?", "the job is waiting for an answer: view it to answer"),
 
 		title.Render("Params form / filter / prompts") + "\n" +
 			row("tab/shift+tab", "move between fields") + "\n" +

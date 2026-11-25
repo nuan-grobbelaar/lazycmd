@@ -67,6 +67,9 @@ func parseArg(s string) ([]argPart, error) {
 // validateCommand runs the load-time checks every command spec gets,
 // whatever file it came from.
 func validateCommand(cmd ResolvedCommand) error {
+	if err := validateConfirm(cmd); err != nil {
+		return err
+	}
 	if err := validateParams(cmd); err != nil {
 		return err
 	}

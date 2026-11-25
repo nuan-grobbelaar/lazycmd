@@ -65,6 +65,11 @@
         },
         "run": { "type": "string", "description": "Inline shell. Exactly one of run/script, on a commands.yaml entry." },
         "script": { "type": "string", "description": "Path to a script, relative to the project root. Exactly one of run/script." },
+        "confirm": {
+          "type": ["boolean", "string"],
+          "minLength": 1,
+          "description": "Ask before running, after the form: true for 'Run <name>?', or the question itself with {param} placeholders filled from the answers (secrets show as dots). y runs; n/esc go back; enter does nothing. Also asks on re-runs and restarts."
+        },
         "terminal": { "type": "boolean", "description": "enter runs the command with the real terminal, like the t key, for interactive programs (fzf, vim, psql). Shown as ⧉ in the list." },
         "args": {
           "type": "array",

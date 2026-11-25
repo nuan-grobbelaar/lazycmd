@@ -34,6 +34,7 @@ type ProfileFile struct {
 	Defaults     map[string]map[string]any           `yaml:"defaults,omitempty"`
 	Params       map[string]map[string]ParamOverride `yaml:"params,omitempty"`
 	Terminal     []string                            `yaml:"terminal,omitempty"`
+	Confirm      map[string]any                      `yaml:"confirm,omitempty"`
 	FeaturesFile `yaml:",inline"`
 }
 

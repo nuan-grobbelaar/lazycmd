@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
 )
@@ -18,4 +19,7 @@ type trackedJob struct {
 
 	needsInput       bool
 	dismissedForText string
+
+	asks     []*ask.Pending // questions from lazycmd ask/pick, oldest first
+	askToken string         // its LC_ASK_TOKEN, forgotten when it ends
 }
