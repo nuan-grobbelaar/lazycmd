@@ -1,0 +1,5 @@
+# Sidecar for hello.sh. The form only opens after you've said yes to
+# running the project's hello instead of your global one.
+desc: Project version of hello. Shadows a global script of the same name (link examples/global/hello.sh to see it).
+params:
+  - { name: name, type: string, default: world }

@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/ansi"
 
 	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
@@ -318,4 +319,22 @@ func TestRealBinaryAskInPanel(t *testing.T) {
 		out, _ := m.jobs[0].job.Buffer.Snapshot()
 		return strings.Contains(out, "hello nuan")
 	})
+}
+
+// The selected job's band must run the whole row, not stop after the
+// coloured status mark.
+func TestSelectedJobRowIsOneBand(t *testing.T) {
+	m, _ := askModel(t, config.ResolvedCommand{ID: "global:one", Name: "one", Run: "sleep 10"})
+	m = startNamed(t, m, "one")
+	defer m.jobs[0].job.Kill()
+	m.focus, m.jobsCursor = focusJobs, 0
+
+	row := strings.Split(m.renderJobsList(30), "\n")[0]
+	_, rest, ok := strings.Cut(ansi.Strip(row), "◐")
+	if !ok {
+		t.Fatalf("no running mark in %q", ansi.Strip(row))
+	}
+	if !strings.Contains(row, selectedRowStyle(true).Render(rest)) {
+		t.Errorf("name and time aren't on the selection band: %q", row)
+	}
 }

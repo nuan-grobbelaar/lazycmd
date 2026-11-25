@@ -80,7 +80,7 @@ The command list is grouped, top to bottom:
 4. **Discovered**: one group per detected [feature](#features) (Maven, NPM, Vite, git), labelled with its source file.
 
 Rules:
-- A project command **shadows** a global command with the same name. Such a command is shown in **yellow**, and the first time you run it in a repo lazycmd stops and shows which of your scripts it hides and what it will run instead (`y` runs it, anything else cancels). This happens before its form opens, so nothing from the project runs until you say yes. After the first run in that repo it isn't asked again. Deleting `usage.json` brings the question back.
+- A project command **shadows** a global command with the same name. Such a command is shown in **yellow**, and the first time you run it in a repo lazycmd stops and shows which of your scripts it hides and what it will run instead (`y` runs it, anything else cancels). This happens before its form opens, so nothing from the project runs until you say yes. After the first run in that repo it isn't asked again. Deleting `usage.json` brings the question back. To try it, see the `hello` demo in [`examples/`](examples/README.md#try-them-in-this-repo).
 - Feature commands are namespaced (`maven: test`, `npm: lint`) so they never collide with scripts.
 - "Most used here" comes from a usage log keyed by repo and command, with a 14-day half-life, so recent runs weigh more.
 - Files that fail to parse are skipped and reported as warnings in the Output panel's start text. They never stop lazycmd from starting.

@@ -9,6 +9,7 @@ Each script shows one or more lazycmd features. They only print, wait or ask que
 | [`pick-file`](scripts/pick-file.lazycmd.yaml) | **`terminal: true`** (marked `⧉`): `enter` hands fzf the real terminal |
 | [`panel-size`](scripts/panel-size.sh) | the Output panel's **pseudo-terminal size** and **`LC_PANEL=1`**. Resize the window while it runs |
 | [`broken-options`](scripts/broken-options.lazycmd.yaml) | how a failing **`options_cmd`** is reported, and how it clears when `depends_on` changes |
+| [`hello`](scripts/hello.sh) + [`global/hello.sh`](global/hello.sh) | a **project command shadowing a global script** of the same name: shown in yellow, and asked about before its first run in a repo. Needs the global half linked (below) |
 | [`projects/my-app.yaml`](projects/my-app.yaml) | a profile that changes `deploy`'s choices and defaults for one repo |
 
 ## Try them in this repo
@@ -23,10 +24,17 @@ Things to try:
 - **`pick-file`**: `enter` opens fzf full screen.
 - **`panel-size`**: resize the window while it counts.
 - **`broken-options`**: pick region `eu` to see the error under the field, then `us` to watch it clear.
+- **`hello`** (shadowing): first link the global half, so you have a global script called `hello`:
+
+  ```bash
+  mkdir -p ~/.config/lazycmd/scripts && ln -s "$PWD"/examples/global/hello.sh ~/.config/lazycmd/scripts/
+  ```
+
+  Open `lc` here: `hello` under **This project** is yellow, and your global `hello` isn't listed. Press `enter`. Before the form opens, lazycmd says which of your scripts it hides and what it runs instead. `y` runs it and opens the form; anything else cancels, and nothing from the project has run. After that first run it isn't asked again in this repo. To see the question again, delete `~/.local/state/lazycmd/usage.json` (which also clears the usage counts). In any other repo, `hello` is your global one. Remove the link to finish: `rm ~/.config/lazycmd/scripts/hello.sh`.
 
 ## As global scripts
 
-To have them in every repo instead:
+To have them in every repo instead (but not in this repo: here each project script would shadow its own global link, and all of them turn yellow):
 
 ```bash
 mkdir -p ~/.config/lazycmd/scripts

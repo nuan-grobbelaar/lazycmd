@@ -1563,15 +1563,21 @@ func (m Model) renderList(width int) string {
 }
 
 func jobIcon(tj *trackedJob, status jobs.Status) string {
+	g, c := jobGlyph(tj, status)
+	return lipgloss.NewStyle().Foreground(c).Render(g)
+}
+
+// jobGlyph is a job's status mark and its colour.
+func jobGlyph(tj *trackedJob, status jobs.Status) (string, lipgloss.Color) {
 	switch {
 	case tj.needsInput || len(tj.asks) > 0:
-		return lipgloss.NewStyle().Foreground(colorAmber).Render("?")
+		return "?", colorAmber
 	case status == jobs.StatusRunning:
-		return lipgloss.NewStyle().Foreground(colorBlue).Render("◐")
+		return "◐", colorBlue
 	case status == jobs.StatusSucceeded:
-		return lipgloss.NewStyle().Foreground(colorAccent).Render("✓")
+		return "✓", colorAccent
 	default:
-		return lipgloss.NewStyle().Foreground(colorRed).Render("✗")
+		return "✗", colorRed
 	}
 }
 
@@ -1603,7 +1609,19 @@ func (m Model) renderJobsList(width int) string {
 		line := spread(" "+jobIcon(tj, status)+" "+tj.cmd.Name, right, width)
 		switch {
 		case m.focus == focusJobs && i == m.jobsCursor:
-			b.WriteString(selStyle.Width(width).Render(line))
+			// Styled pieces would end the band at their first colour
+			// reset, so lay the row out plain and colour only the mark.
+			g, c := jobGlyph(tj, status)
+			plainRight := detail + " "
+			if tj.needsInput {
+				plainRight = "needs input "
+			}
+			plain := spread(" "+g+" "+tj.cmd.Name, plainRight, width)
+			if rest, ok := strings.CutPrefix(plain, " "+g); ok {
+				b.WriteString(selStyle.Render(" ") + selStyle.Foreground(c).Render(g) + selStyle.Render(rest))
+			} else {
+				b.WriteString(selStyle.Width(width).Render(plain))
+			}
 		case tj == m.activeJob:
 			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line))
 		default:

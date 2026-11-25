@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ func TestExamplesLoad(t *testing.T) {
 	for _, c := range all {
 		byName[c.Name] = c
 	}
-	for _, want := range []string{"deploy", "ask-demo", "pick-file", "panel-size", "broken-options"} {
+	for _, want := range []string{"deploy", "ask-demo", "pick-file", "panel-size", "broken-options", "hello"} {
 		if _, ok := byName[want]; !ok {
 			t.Errorf("example %q missing; got %v", want, all)
 		}
@@ -33,6 +34,32 @@ func TestExamplesLoad(t *testing.T) {
 	repoCmds, repoWarnings := ProjectCommands(filepath.Join("..", "..", ".lazycmd"))
 	if len(repoWarnings) != 0 || len(repoCmds) != len(all) {
 		t.Errorf(".lazycmd: %d commands (warnings %v), want %d", len(repoCmds), repoWarnings, len(all))
+	}
+
+	// With examples/global/hello.sh linked into the global scripts, as the
+	// demo says to, the project's hello shadows it.
+	globalDir := t.TempDir()
+	globalHello, _ := filepath.Abs(filepath.Join(dir, "global", "hello.sh"))
+	if err := os.MkdirAll(filepath.Join(globalDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(globalHello, filepath.Join(globalDir, "scripts", "hello.sh")); err != nil {
+		t.Fatal(err)
+	}
+	groups0, _ := Discover(globalDir, filepath.Join("..", "..", ".lazycmd"))
+	var hello *ResolvedCommand
+	for _, g := range groups0 {
+		for i, c := range g.Commands {
+			if c.Name == "hello" {
+				if hello != nil {
+					t.Fatal("hello listed twice: the global one should be hidden")
+				}
+				hello = &g.Commands[i]
+			}
+		}
+	}
+	if hello == nil || hello.Shadows == "" {
+		t.Errorf("project hello should shadow the linked global hello.sh, got %+v", hello)
 	}
 
 	cmds := []ResolvedCommand{byName["deploy"]}
