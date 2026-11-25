@@ -20,7 +20,7 @@ func TestParamsFormOptionsCmdLoadsAsynchronously(t *testing.T) {
 	root := t.TempDir()
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
 		{ID: "project:deploy", Name: "deploy", Run: "echo hi", Params: []config.Param{
-			{Name: "env", Type: config.ParamSelect, Options: []string{"dev", "staging"}},
+			{Name: "env", Type: config.ParamSelect, Options: config.Opts("dev", "staging")},
 			{
 				Name: "service", Type: config.ParamSelect,
 				OptionsCmd: "echo svc-a; echo svc-b", DependsOn: []string{"env"},
@@ -46,7 +46,7 @@ func TestParamsFormOptionsCmdLoadsAsynchronously(t *testing.T) {
 
 func TestMultiParamDefaultPreselects(t *testing.T) {
 	cmd := config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{
-		{Name: "features", Type: config.ParamMulti, Options: []string{"logging", "metrics", "tracing"}, Default: "logging,tracing"},
+		{Name: "features", Type: config.ParamMulti, Options: config.Opts("logging", "metrics", "tracing"), Default: "logging,tracing"},
 	}}
 	pf := newParamsForm(cmd, t.TempDir())
 	pf.form.Init()
@@ -105,7 +105,7 @@ func TestProfileOverriddenMultiIsPreselected(t *testing.T) {
 		Params: []config.Param{{Name: "features", Type: config.ParamMulti, OptionsCmd: "echo nope"}},
 	}}}}
 	if w := config.ApplyParamOverrides(groups, map[string]map[string]config.ParamOverride{
-		"echo-params": {"features": {Options: []string{"logging", "tracing", "audit"}, Default: []any{"logging", "audit"}}},
+		"echo-params": {"features": {Options: config.Opts("logging", "tracing", "audit"), Default: []any{"logging", "audit"}}},
 	}); len(w) != 0 {
 		t.Fatal(w)
 	}
@@ -113,5 +113,82 @@ func TestProfileOverriddenMultiIsPreselected(t *testing.T) {
 	pf.form.Init()
 	if got := pf.values()["features"]; got != "logging,audit" {
 		t.Errorf("features = %q, want logging,audit preselected", got)
+	}
+}
+
+func TestFormShowsLabelsAndSendsValues(t *testing.T) {
+	cmd := config.ResolvedCommand{Name: "pick", Run: "true", Params: []config.Param{
+		{Name: "repo", Type: config.ParamSelect, Default: "/r/cast", Options: config.OptionList{
+			{Label: "vandag", Value: "/r/vandag"}, {Label: "cast", Value: "/r/cast"},
+		}},
+		{Name: "many", Type: config.ParamMulti, Default: "/b", Options: config.OptionList{
+			{Label: "Ay\x1b]0;x\x07", Value: "/a"}, {Label: "Bee", Value: "/b"},
+		}},
+	}}
+	pf := newParamsForm(cmd, t.TempDir())
+	pf.form.Init()
+	view := pf.form.View()
+	if !strings.Contains(view, "cast") || !strings.Contains(view, "Bee") || strings.Contains(view, "/r/") {
+		t.Errorf("view should show labels, not values:\n%s", view)
+	}
+	if v := pf.values(); v["repo"] != "/r/cast" || v["many"] != "/b" {
+		t.Errorf("values = %v, want the values, not the labels", v)
+	}
+
+	opts := pf.toOptions(cmd.Params[1], cmd.Params[1].Options)
+	if opts[0].Key != "Ay^[]0;x^G" || opts[0].Value != "/a" {
+		t.Errorf("option = %+v, want a cleaned label and the raw value", opts[0])
+	}
+}
+
+func TestToOptionsLabelModes(t *testing.T) {
+	root := t.TempDir()
+	pf := newParamsForm(config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{{Name: "s", Type: config.ParamString}}}, root)
+	p := config.Param{Name: "pom", Type: config.ParamSelect, Label: config.LabelRelative}
+	opts := pf.toOptions(p, config.Opts(root+"/svc/api/pom.xml", "./web/pom.xml"))
+	if opts[0].Key != "svc/api/pom.xml" || opts[0].Value != root+"/svc/api/pom.xml" || opts[1].Key != "web/pom.xml" {
+		t.Errorf("relative = %+v", opts)
+	}
+	p.Label = config.LabelBasename
+	opts = pf.toOptions(p, config.Opts("/a/one.txt", "/b/two.txt"))
+	if opts[0].Key != "one.txt" || opts[1].Key != "two.txt" {
+		t.Errorf("basename = %+v", opts)
+	}
+}
+
+// Regression: an options_cmd with no depends_on never loaded, because huh
+// only re-runs an OptionsFunc when its bindings' hash changes from 0, and
+// nil bindings hash to 0. Also covers tab-separated labels.
+func TestOptionsCmdWithoutDependsOnLoads(t *testing.T) {
+	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
+		{ID: "project:pick", Name: "pick", Run: "true", Params: []config.Param{
+			{Name: "repo", Type: config.ParamSelect, OptionsCmd: `printf '/r/vandag\tVandag\n/r/cast\n'`},
+		}},
+	}}}
+	m := ready(t, groups, t.TempDir(), t.TempDir())
+	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("expected a params form to open")
+	}
+	m = pumpUntil(t, m, cmd, func(m Model) bool { return strings.Contains(m.activeForm.form.View(), "Vandag") }, 2*time.Second)
+	view := m.activeForm.form.View()
+	if !strings.Contains(view, "Vandag") || !strings.Contains(view, "/r/cast") || strings.Contains(view, "/r/vandag") {
+		t.Errorf("options_cmd options didn't load with labels:\n%s", view)
+	}
+}
+
+// Regression: a multi's default only reached the command when the multi
+// was the first field (huh writes a multi's value back only once the
+// field is touched), and never for options_cmd options.
+func TestMultiDefaultReachesCommandAnywhere(t *testing.T) {
+	cmd := config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{
+		{Name: "first", Type: config.ParamString},
+		{Name: "static", Type: config.ParamMulti, Options: config.Opts("a", "b", "c"), Default: "a,c"},
+		{Name: "dynamic", Type: config.ParamMulti, OptionsCmd: "echo a; echo b", Default: "b"},
+	}}
+	pf := newParamsForm(cmd, t.TempDir())
+	pf.form.Init()
+	if v := pf.values(); v["static"] != "a,c" || v["dynamic"] != "b" {
+		t.Errorf("values = %v, want both multi defaults", v)
 	}
 }

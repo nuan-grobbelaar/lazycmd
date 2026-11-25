@@ -268,7 +268,7 @@ func setDefault(cmd *ResolvedCommand, param string, raw any) []string {
 			return []string{fmt.Sprintf("defaults: %s.%s: %v", cmd.Name, param, err)}
 		}
 		if bad := notAnOption(*p, val); bad != "" {
-			return []string{fmt.Sprintf("defaults: %s.%s: %q is not one of %s", cmd.Name, param, bad, strings.Join(p.Options, ", "))}
+			return []string{fmt.Sprintf("defaults: %s.%s: %q is not one of %s", cmd.Name, param, bad, strings.Join(p.Options.Values(), ", "))}
 		}
 		p.Default = val
 		return nil

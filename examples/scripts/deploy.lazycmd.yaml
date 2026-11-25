@@ -1,0 +1,21 @@
+# Sidecar for deploy.sh: gives it a description, a form and arguments.
+desc: Pretend deploy (prints only). Shows select, multi, labelled options, bool, secret and args.
+params:
+  - { name: env, type: select, options: [dev, staging, prod], default: dev }
+  - { name: services, type: multi, options: [api, web, worker], default: "api,web" }
+  - name: region           # the form shows the label, the script gets the value
+    type: select
+    options:
+      - label: Frankfurt
+        value: eu-central-1
+      - label: Cape Town
+        value: af-south-1
+    default: eu-central-1
+  - { name: tag, type: string, pattern: '^[A-Za-z0-9._-]*$' }
+  - { name: dry_run, type: bool, default: "true" }
+  - { name: token, type: secret }
+
+# One entry per argument. --tag={tag} is dropped when tag is empty, so the
+# script falls back to "latest". The token isn't here: secrets can't be
+# arguments, so the script reads $LC_TOKEN instead.
+args: ["{env}", "--tag={tag}", "--dry-run={dry_run}"]

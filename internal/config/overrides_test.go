@@ -8,7 +8,7 @@ import (
 
 func overrideGroups() ([]Param, []Group) {
 	shared := []Param{
-		{Name: "features", Type: ParamMulti, Options: []string{"logging", "metrics"}, Default: "metrics"},
+		{Name: "features", Type: ParamMulti, Options: Opts("logging", "metrics"), Default: "metrics"},
 		{Name: "env", Type: ParamSelect, OptionsCmd: "ls envs", DependsOn: []string{"features"}},
 		{Name: "message", Type: ParamString},
 	}
@@ -22,8 +22,8 @@ func TestParamOverridesReplaceOptionsAndDefaults(t *testing.T) {
 	shared, groups := overrideGroups()
 	w := ApplyParamOverrides(groups, map[string]map[string]ParamOverride{
 		"echo-params": {
-			"features": {Options: []string{"logging", "tracing", "audit"}, Default: []any{"logging", "audit"}},
-			"env":      {Options: []string{"dev", "prod"}, Default: "prod"},
+			"features": {Options: Opts("logging", "tracing", "audit"), Default: []any{"logging", "audit"}},
+			"env":      {Options: Opts("dev", "prod"), Default: "prod"},
 		},
 	})
 	if len(w) != 0 {
@@ -31,10 +31,10 @@ func TestParamOverridesReplaceOptionsAndDefaults(t *testing.T) {
 	}
 
 	got := groups[0].Commands[0].Params
-	if strings.Join(got[0].Options, ",") != "logging,tracing,audit" || got[0].Default != "logging,audit" {
+	if strings.Join(got[0].Options.Values(), ",") != "logging,tracing,audit" || got[0].Default != "logging,audit" {
 		t.Errorf("features = %+v", got[0])
 	}
-	if got[1].OptionsCmd != "" || got[1].DependsOn != nil || strings.Join(got[1].Options, ",") != "dev,prod" || got[1].Default != "prod" {
+	if got[1].OptionsCmd != "" || got[1].DependsOn != nil || strings.Join(got[1].Options.Values(), ",") != "dev,prod" || got[1].Default != "prod" {
 		t.Errorf("env = %+v, want options_cmd replaced by fixed options", got[1])
 	}
 	if shared[0].Default != "metrics" || shared[1].OptionsCmd != "ls envs" || len(groups[0].Commands[1].Params[0].Options) != 2 {
@@ -45,7 +45,7 @@ func TestParamOverridesReplaceOptionsAndDefaults(t *testing.T) {
 func TestParamOverridesOptionsOnlyDropsStaleDefault(t *testing.T) {
 	_, groups := overrideGroups()
 	w := ApplyParamOverrides(groups, map[string]map[string]ParamOverride{
-		"global:echo-params": {"features": {Options: []string{"logging", "audit"}}}, // by id
+		"global:echo-params": {"features": {Options: Opts("logging", "audit")}}, // by id
 	})
 	if len(w) != 0 {
 		t.Fatalf("warnings = %v", w)
@@ -68,10 +68,10 @@ func TestParamOverridesWarnings(t *testing.T) {
 	_, groups := overrideGroups()
 	w := ApplyParamOverrides(groups, map[string]map[string]ParamOverride{
 		"echo-params": {
-			"features": {Options: []string{"a", "b"}, Default: []any{"a", "zzz"}}, // default not an option
-			"message":  {Options: []string{"x"}},                                  // options on a string
-			"ghost":    {Default: "x"},                                            // unknown param
-			"env":      {},                                                        // nothing set
+			"features": {Options: Opts("a", "b"), Default: []any{"a", "zzz"}}, // default not an option
+			"message":  {Options: Opts("x")},                                  // options on a string
+			"ghost":    {Default: "x"},                                        // unknown param
+			"env":      {},                                                    // nothing set
 		},
 		"nope": {"x": {Default: "y"}}, // unknown command
 	})
@@ -91,7 +91,7 @@ func TestParamOverridesWarnings(t *testing.T) {
 		}
 	}
 	got := groups[0].Commands[0].Params
-	if strings.Join(got[0].Options, ",") != "a,b" || got[0].Default != "" {
+	if strings.Join(got[0].Options.Values(), ",") != "a,b" || got[0].Default != "" {
 		t.Errorf("features = %+v: options apply even when the default is rejected", got[0])
 	}
 	if len(got[2].Options) != 0 {
@@ -102,7 +102,7 @@ func TestParamOverridesWarnings(t *testing.T) {
 func TestDefaultsCheckedAgainstOverriddenOptions(t *testing.T) {
 	_, groups := overrideGroups()
 	w := ApplyParamOverrides(groups, map[string]map[string]ParamOverride{
-		"echo-params": {"features": {Options: []string{"a", "b"}}},
+		"echo-params": {"features": {Options: Opts("a", "b")}},
 	})
 	w = append(w, ApplyDefaults(groups, map[string]map[string]any{
 		"echo-params": {"features": []any{"b"}},
@@ -130,7 +130,7 @@ params:
 		t.Fatalf("profile = %v, warnings = %v", prof, w)
 	}
 	o := prof.File.Params["echo-params"]
-	if strings.Join(o["features"].Options, ",") != "logging,audit" || o["env"].Default != "prod" {
+	if strings.Join(o["features"].Options.Values(), ",") != "logging,audit" || o["env"].Default != "prod" {
 		t.Errorf("params = %+v", prof.File.Params)
 	}
 

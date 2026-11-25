@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../../schema/lazycmd-profile.schema.json
+#
+# Example profile: copy to ~/.config/lazycmd/projects/my-app.yaml and
+# point path at one of your repos. In that repo, the deploy script offers
+# that repo's services and starts on staging. Everywhere else it keeps the
+# options from its sidecar.
+path: ~/repos/my-app
+
+params:
+  deploy:
+    services: { options: [api, billing, notifications], default: [api, billing] }
+
+defaults:
+  deploy: { env: staging, tag: "${env}-candidate" }

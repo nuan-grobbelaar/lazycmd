@@ -14,14 +14,17 @@ const (
 )
 
 type Param struct {
-	Name       string    `yaml:"name"`
-	Type       ParamType `yaml:"type"`
-	Default    string    `yaml:"default,omitempty"`
-	Pattern    string    `yaml:"pattern,omitempty"`
-	Required   bool      `yaml:"required,omitempty"`
-	Options    []string  `yaml:"options,omitempty"`
-	OptionsCmd string    `yaml:"options_cmd,omitempty"`
-	DependsOn  []string  `yaml:"depends_on,omitempty"`
+	Name       string     `yaml:"name"`
+	Type       ParamType  `yaml:"type"`
+	Default    string     `yaml:"default,omitempty"`
+	Pattern    string     `yaml:"pattern,omitempty"`
+	Required   bool       `yaml:"required,omitempty"`
+	Options    OptionList `yaml:"options,omitempty"`
+	OptionsCmd string     `yaml:"options_cmd,omitempty"`
+	DependsOn  []string   `yaml:"depends_on,omitempty"`
+	// Label derives labels from option values that are paths:
+	// "basename" or "relative" (to the repo root). See options.go.
+	Label string `yaml:"label,omitempty"`
 }
 
 // Command is the one spec shape shared by commands.yaml entries and

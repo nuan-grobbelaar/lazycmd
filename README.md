@@ -140,8 +140,9 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `default` | initial value. Bools take `true`/`false`. For `multi`, a comma-separated list of options to preselect |
 | `pattern` | regexp a `string` value must match |
 | `required` | `string` only: the form refuses an empty value |
-| `options` | static choices for `select` / `multi` |
-| `options_cmd` | shell command whose output lines become the choices |
+| `options` | static choices for `select` / `multi`. Each is a value, or a `label` / `value` pair |
+| `options_cmd` | shell command whose output lines become the choices (`value<TAB>label` for a label) |
+| `label` | `basename` or `relative`: derive labels from option values that are paths |
 | `depends_on` | names of earlier params; when one changes, `options_cmd` runs again |
 
 | Type | Form field |
@@ -154,6 +155,31 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `text` | multi-line input |
 
 `options_cmd` runs in the repo root with a 5 second timeout, with every param answered so far available as `LC_<NAME>`. Results are cached per command and answers, so a dependent select re-runs only when what it depends on changes. It only runs after you select the command, never on startup. Declare a param after the ones it `depends_on`.
+
+### Labels: showing something other than the value
+
+When the values are long (full paths, ids), show a label instead. The **value** is still what the command receives (`LC_<NAME>`, `args:`, the preview) and what every default matches. The label is only what the form shows.
+
+```yaml
+params:
+  - name: repo
+    type: select
+    options:
+      - label: vandag
+        value: /Users/me/repos/vandag
+      - label: lazycast
+        value: /Users/me/repos/lazycast
+      - dev                 # a plain value is its own label
+    default: /Users/me/repos/vandag   # defaults use values, not labels
+```
+
+- **From `options_cmd`:** print `value<TAB>label`. A line without a tab is just the value.
+  ```yaml
+  options_cmd: |
+    for g in ~/repos/*/.git; do d=${g%/.git}; printf '%s\t%s\n' "$d" "${d##*/}"; done
+  ```
+- **Derived from paths:** `label: basename` shows the last part of each value (`/r/api/pom.xml` → `pom.xml`), and adds the parent folder when two would look the same (`api/pom.xml`, `web/pom.xml`). `label: relative` shows each value relative to the repo root (`/repo/api/pom.xml` or `./api/pom.xml` → `api/pom.xml`). It works for `options` and `options_cmd` alike, and an option with its own label keeps it.
+- Labels have control characters made visible like other text from files. Values are passed on exactly.
 
 The form shows a live preview of the final command line under the fields.
 
@@ -197,6 +223,8 @@ params:
 ```
 
 A broken sidecar produces a warning and that script is skipped. The `.lazycmd.yaml` suffix keeps sidecars from colliding with other YAML files.
+
+A complete example, with a script, its sidecar and a profile that changes its choices for one repo, is in [`examples/`](examples/).
 
 ## commands.yaml
 
@@ -303,7 +331,7 @@ maven:
 - An unknown command or param is a warning.
 
 **params.** Changes a `select` or `multi` param's choices for this repo, without editing the command's own file. That's handy for a global script whose sidecar can't know each project's options. Keyed like `defaults`.
-- `options` replaces the param's options. If the param had an `options_cmd`, that is replaced too, and its `depends_on` no longer applies. A profile can't *add* an `options_cmd`, so profiles never become another place where commands run.
+- `options` replaces the param's options (plain values or `label` / `value` pairs). If the param had an `options_cmd`, that is replaced too, and its `depends_on` no longer applies. A profile can't *add* an `options_cmd`, so profiles never become another place where commands run.
 - `default` preselects, and is checked against the (new) options. A list works for `multi`, and `${param}` references work as in `defaults`.
 - Setting only `options` drops the command's own default if it isn't among them.
 - A `defaults:` entry for the same param wins, and is checked against the new options.

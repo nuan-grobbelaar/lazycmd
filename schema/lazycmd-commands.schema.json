@@ -22,12 +22,30 @@
         "required": { "type": "boolean" },
         "options": {
           "type": "array",
-          "items": { "type": "string" },
-          "description": "Static choices for a select/multi param."
+          "items": {
+            "oneOf": [
+              { "type": ["string", "number", "boolean"] },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["value"],
+                "properties": {
+                  "value": { "type": ["string", "number", "boolean"], "description": "What the command receives, and what defaults match." },
+                  "label": { "type": "string", "description": "What the form shows instead of the value." }
+                }
+              }
+            ]
+          },
+          "description": "Static choices for a select/multi param. Each is a plain value, or {value, label} to show a label instead of the value (e.g. for full paths)."
         },
         "options_cmd": {
           "type": "string",
-          "description": "Shell command whose stdout lines become a select/multi param's choices. Runs in the project root with the other answered params as LC_<NAME> env vars."
+          "description": "Shell command whose stdout lines become a select/multi param's choices. A line 'value<TAB>label' shows the label. Runs in the project root with the other answered params as LC_<NAME> env vars."
+        },
+        "label": {
+          "type": "string",
+          "enum": ["basename", "relative"],
+          "description": "select/multi only: derive labels from option values that are paths. basename: the last path element (adding the parent folder when two collide). relative: relative to the repo root. Options with their own label keep it; values never change."
         },
         "depends_on": {
           "type": "array",

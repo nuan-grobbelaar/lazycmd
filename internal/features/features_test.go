@@ -381,7 +381,7 @@ func TestNpmWorkspacesPicker(t *testing.T) {
 	if len(lint.Params) != 1 || lint.Params[0].Name != "workspace" {
 		t.Fatalf("params = %+v", lint.Params)
 	}
-	opts := lint.Params[0].Options
+	opts := lint.Params[0].Options.Values()
 	if len(opts) != 3 || opts[0] != "." || opts[1] != "@app/api" || opts[2] != "@app/web" {
 		t.Errorf("options = %v, want [. @app/api @app/web]", opts)
 	}
@@ -502,7 +502,7 @@ func TestMavenSpringBootRunInModule(t *testing.T) {
 	run := findCmd(t, cmds, "maven: spring-boot:run")
 
 	mod := paramByName(run, "module")
-	if mod == nil || len(mod.Options) != 1 || mod.Options[0] != "services/web" || !mod.Required || mod.Default != "services/web" {
+	if mod == nil || len(mod.Options) != 1 || mod.Options[0].Value != "services/web" || !mod.Required || mod.Default != "services/web" {
 		t.Fatalf("module param = %+v, want only services/web, required, preselected", mod)
 	}
 	if p := paramByName(run, "profile"); p == nil || p.Default != "local" {
@@ -552,7 +552,7 @@ func TestMavenRunGoalDeclaredAtRoot(t *testing.T) {
 	writeFile(t, filepath.Join(parent, "b", "pom.xml"), `<project></project>`)
 	cmds, _ = Maven{}.Commands(parent, nil)
 	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
-	if mod == nil || strings.Join(mod.Options, ",") != "a,b" {
+	if mod == nil || strings.Join(mod.Options.Values(), ",") != "a,b" {
 		t.Errorf("module param = %+v, want a,b", mod)
 	}
 }
@@ -623,7 +623,7 @@ func TestMavenModulesStayInsideRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
-	if mod == nil || strings.Join(mod.Options, ",") != "ok" {
+	if mod == nil || strings.Join(mod.Options.Values(), ",") != "ok" {
 		t.Errorf("module options = %+v, want just ok (outside, missing and duplicate entries dropped)", mod)
 	}
 }
@@ -635,7 +635,7 @@ func TestMavenModuleCycleTerminates(t *testing.T) {
 	writeFile(t, filepath.Join(root, "a", "b", "pom.xml"), `<project><modules><module>..</module></modules>`+springPlugin+`</project>`)
 	cmds, _ := Maven{}.Commands(root, nil)
 	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
-	if mod == nil || strings.Join(mod.Options, ",") != "a/b" {
+	if mod == nil || strings.Join(mod.Options.Values(), ",") != "a/b" {
 		t.Errorf("module options = %+v, want a/b", mod)
 	}
 }

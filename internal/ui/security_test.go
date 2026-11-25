@@ -30,7 +30,7 @@ func TestRepoTextCannotInjectEscapeSequences(t *testing.T) {
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{{
 		ID: "project:x", Name: "ok\x1b]0;TITLE\x07\x1b[8mhidden", Run: "true",
 		Desc:   "desc\x1b]52;c;eA==\x07",
-		Params: []config.Param{{Name: "p\x1b]0;P\x07", Default: "d\x1b]0;D\x07", Options: []string{"o\x1b]0;O\x07"}, Type: config.ParamSelect}},
+		Params: []config.Param{{Name: "p\x1b]0;P\x07", Default: "d\x1b]0;D\x07", Options: config.Opts("o\x1b]0;O\x07"), Type: config.ParamSelect}},
 	}}}}
 	m := New(groups, []string{"warn \x1b]0;W\x07"}, t.TempDir(), root)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})

@@ -374,7 +374,7 @@ func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
 		ID: "g:greet", Name: "greet", Run: `echo "hi $LC_WHO from $LC_ENV"`,
 		Params: []config.Param{
 			{Name: "who", Type: config.ParamString, Required: true},
-			{Name: "env", Type: config.ParamSelect, Options: []string{"dev", "prod"}},
+			{Name: "env", Type: config.ParamSelect, Options: config.Opts("dev", "prod")},
 			{Name: "tag", Type: config.ParamString, Pattern: `^[a-z]+$`},
 		},
 	}}}}

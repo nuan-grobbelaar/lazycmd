@@ -17,8 +17,8 @@ import (
 // the param had one. A profile can't add an options_cmd: that would make
 // profiles a second place where commands get run.
 type ParamOverride struct {
-	Options []string `yaml:"options,omitempty"`
-	Default any      `yaml:"default,omitempty"`
+	Options OptionList `yaml:"options,omitempty"`
+	Default any        `yaml:"default,omitempty"`
 }
 
 // ApplyParamOverrides applies a profile's params: map. Keys match a
@@ -86,7 +86,7 @@ func overrideParam(cmd *ResolvedCommand, name string, o ParamOverride) (bool, []
 		if p.Type != ParamSelect && p.Type != ParamMulti {
 			warnings = append(warnings, fmt.Sprintf("params: %s.%s: options only apply to select and multi params, not %s", cmd.Name, name, p.Type))
 		} else {
-			p.Options = append([]string(nil), o.Options...)
+			p.Options = append(OptionList(nil), o.Options...)
 			p.OptionsCmd = ""
 			p.DependsOn = nil
 			if p.Default != "" && notAnOption(*p, p.Default) != "" {
@@ -103,7 +103,7 @@ func overrideParam(cmd *ResolvedCommand, name string, o ParamOverride) (bool, []
 		return false, append(warnings, fmt.Sprintf("params: %s.%s: %v", cmd.Name, name, err))
 	}
 	if bad := notAnOption(*p, val); bad != "" {
-		return false, append(warnings, fmt.Sprintf("params: %s.%s: %q is not one of %s", cmd.Name, name, bad, strings.Join(p.Options, ", ")))
+		return false, append(warnings, fmt.Sprintf("params: %s.%s: %q is not one of %s", cmd.Name, name, bad, strings.Join(p.Options.Values(), ", ")))
 	}
 	p.Default = val
 	return true, warnings
@@ -119,12 +119,12 @@ func notAnOption(p Param, val string) string {
 	}
 	switch p.Type {
 	case ParamSelect:
-		if !contains(p.Options, val) {
+		if !p.Options.Has(val) {
 			return val
 		}
 	case ParamMulti:
 		for _, v := range strings.Split(val, ",") {
-			if v = strings.TrimSpace(v); v != "" && !contains(p.Options, v) {
+			if v = strings.TrimSpace(v); v != "" && !p.Options.Has(v) {
 				return v
 			}
 		}

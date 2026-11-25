@@ -187,13 +187,13 @@ func (Maven) Commands(repoRoot string, settings map[string]string) ([]config.Res
 	if len(profileIDs) > 0 {
 		profileParam = &config.Param{
 			Name: "profile", Type: config.ParamSelect,
-			Options: profileIDs, Default: settings["default_profile"],
+			Options: config.Opts(profileIDs...), Default: settings["default_profile"],
 		}
 	}
 
 	var params []config.Param
 	if len(pom.Modules) > 0 {
-		params = append(params, config.Param{Name: "module", Type: config.ParamSelect, Options: pom.Modules})
+		params = append(params, config.Param{Name: "module", Type: config.ParamSelect, Options: config.Opts(pom.Modules...)})
 	}
 	if profileParam != nil {
 		params = append(params, *profileParam)
@@ -280,7 +280,7 @@ func runGoalCommand(g pluginGoal, root pomXML, modules []mavenModule, profilePar
 	if len(where) > 0 {
 		params = append(params, config.Param{
 			Name: "module", Type: config.ParamSelect,
-			Options: where, Default: where[0], Required: true,
+			Options: config.Opts(where...), Default: where[0], Required: true,
 		})
 	}
 	if profileParam != nil {

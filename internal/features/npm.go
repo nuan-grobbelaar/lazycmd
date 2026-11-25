@@ -111,7 +111,7 @@ func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 				scripts[name] = true
 			}
 		}
-		params = []config.Param{{Name: "workspace", Type: config.ParamSelect, Options: opts, Default: "."}}
+		params = []config.Param{{Name: "workspace", Type: config.ParamSelect, Options: config.Opts(opts...), Default: "."}}
 	}
 
 	names := make([]string, 0, len(scripts))

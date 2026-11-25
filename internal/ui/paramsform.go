@@ -37,7 +37,7 @@ type paramsForm struct {
 	notice string // shown in the modal when run-now is refused
 
 	cacheMu sync.Mutex
-	cache   map[string][]string
+	cache   map[string]config.OptionList
 }
 
 func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
@@ -47,7 +47,7 @@ func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
 		strVals:    map[string]*string{},
 		boolVals:   map[string]*bool{},
 		multiVals:  map[string]*[]string{},
-		cache:      map[string][]string{},
+		cache:      map[string]config.OptionList{},
 	}
 
 	fields := make([]huh.Field, 0, len(cmd.Params))
@@ -87,7 +87,16 @@ func (pf *paramsForm) buildField(p config.Param) huh.Field {
 		return field
 
 	case config.ParamMulti:
+		// Seed the value with the default rather than marking options
+		// selected: huh only writes a multi's value back when the field
+		// is touched, but it ticks options from the value it's given,
+		// including options that arrive later from options_cmd.
 		v := new([]string)
+		for _, d := range strings.Split(p.Default, ",") {
+			if d = strings.TrimSpace(d); d != "" {
+				*v = append(*v, d)
+			}
+		}
 		pf.multiVals[p.Name] = v
 		field := huh.NewMultiSelect[string]().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 		pf.attachMultiOptions(field, p)
@@ -134,53 +143,50 @@ func stringValidator(p config.Param) func(string) error {
 
 func (pf *paramsForm) attachSelectOptions(field *huh.Select[string], p config.Param) {
 	if p.OptionsCmd == "" {
-		field.Options(toOptions(p.Options)...)
+		field.Options(pf.toOptions(p, p.Options)...)
 		return
 	}
 	deps := pf.dependencyPointers(p.DependsOn)
 	field.OptionsFunc(func() []huh.Option[string] {
-		return toOptions(pf.runOptionsCmd(p.OptionsCmd))
+		return pf.toOptions(p, pf.runOptionsCmd(p.OptionsCmd))
 	}, deps)
 }
 
 func (pf *paramsForm) attachMultiOptions(field *huh.MultiSelect[string], p config.Param) {
 	if p.OptionsCmd == "" {
-		opts := toOptions(p.Options)
-		// Default is a comma-separated list of options to preselect.
-		if p.Default != "" {
-			want := map[string]bool{}
-			for _, d := range strings.Split(p.Default, ",") {
-				want[strings.TrimSpace(d)] = true
-			}
-			for i, o := range opts {
-				opts[i] = o.Selected(want[o.Value])
-			}
-		}
-		field.Options(opts...)
+		field.Options(pf.toOptions(p, p.Options)...)
 		return
 	}
 	deps := pf.dependencyPointers(p.DependsOn)
 	field.OptionsFunc(func() []huh.Option[string] {
-		return toOptions(pf.runOptionsCmd(p.OptionsCmd))
+		return pf.toOptions(p, pf.runOptionsCmd(p.OptionsCmd))
 	}, deps)
 }
 
-func toOptions(values []string) []huh.Option[string] {
-	opts := make([]huh.Option[string], len(values))
-	for i, v := range values {
+// toOptions turns a param's options into huh options: labels from the
+// options or the param's label mode, values as given.
+func (pf *paramsForm) toOptions(p config.Param, opts config.OptionList) []huh.Option[string] {
+	opts = config.WithLabels(opts, p.Label, pf.projectDir)
+	out := make([]huh.Option[string], len(opts))
+	for i, o := range opts {
 		// The label is drawn, so it is cleaned; the value is what the
 		// command receives, so it stays exactly as given.
-		opts[i] = huh.NewOption(safetext.Line(v), v)
+		out[i] = huh.NewOption(safetext.Line(o.Display()), o.Value)
 	}
-	return opts
+	return out
 }
 
 // dependencyPointers resolves depends_on names to the bound pointers of
 // those earlier fields, which is what OptionsFunc hashes to decide
 // whether to re-run. Params must declare their dependencies earlier in
 // the list; an unresolved name is silently dropped.
+// dependencyPointers is the bindings huh watches to decide when to re-run
+// an OptionsFunc. huh runs it whenever the bindings' hash differs from
+// the last one, starting from 0, and nil bindings hash to 0 too, so a
+// param with no depends_on would never load its options. The leading
+// constant makes the hash non-zero, so they load once when the form opens.
 func (pf *paramsForm) dependencyPointers(names []string) []any {
-	var deps []any
+	deps := []any{"options"}
 	for _, n := range names {
 		switch {
 		case pf.strVals[n] != nil:
@@ -197,7 +203,7 @@ func (pf *paramsForm) dependencyPointers(names []string) []any {
 // runOptionsCmd runs cmdStr in the project root with every param value
 // collected so far injected as LC_<NAME>, so a dependent select can read
 // an earlier answer. Results are cached per (command, env) pair.
-func (pf *paramsForm) runOptionsCmd(cmdStr string) []string {
+func (pf *paramsForm) runOptionsCmd(cmdStr string) config.OptionList {
 	env := pf.currentEnv()
 	key := cmdStr + "\x00" + strings.Join(env, "\x00")
 
@@ -214,13 +220,9 @@ func (pf *paramsForm) runOptionsCmd(cmdStr string) []string {
 	c.Dir = pf.projectDir
 	c.Env = append(os.Environ(), env...)
 
-	var opts []string
+	var opts config.OptionList
 	if out, err := c.Output(); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				opts = append(opts, line)
-			}
-		}
+		opts = config.ParseOptionLines(string(out)) // "value<TAB>label" or just the value
 	}
 
 	pf.cacheMu.Lock()

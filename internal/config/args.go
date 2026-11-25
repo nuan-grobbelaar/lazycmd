@@ -77,6 +77,12 @@ func validateCommand(cmd ResolvedCommand) error {
 // a load warning instead of a crash when the form opens.
 func validateParams(cmd ResolvedCommand) error {
 	for _, p := range cmd.Params {
+		if !validLabelMode(p.Label) {
+			return fmt.Errorf("param %q: label must be %q or %q, not %q", p.Name, LabelBasename, LabelRelative, p.Label)
+		}
+		if p.Label != "" && p.Type != ParamSelect && p.Type != ParamMulti {
+			return fmt.Errorf("param %q: label only applies to select and multi params", p.Name)
+		}
 		if p.Pattern == "" {
 			continue
 		}

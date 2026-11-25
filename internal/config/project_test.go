@@ -138,9 +138,9 @@ func TestDiscoverWithExtraAndShadowing(t *testing.T) {
 
 func TestApplyDefaults(t *testing.T) {
 	shared := []Param{
-		{Name: "module", Type: ParamSelect, Options: []string{"core", "api"}},
+		{Name: "module", Type: ParamSelect, Options: Opts("core", "api")},
 		{Name: "also_make", Type: ParamBool},
-		{Name: "features", Type: ParamMulti, Options: []string{"a", "b"}},
+		{Name: "features", Type: ParamMulti, Options: Opts("a", "b")},
 	}
 	groups := []Group{{Title: "x", Commands: []ResolvedCommand{
 		{ID: "maven:test", Name: "maven: test", Params: shared},

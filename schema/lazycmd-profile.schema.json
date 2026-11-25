@@ -35,7 +35,20 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "options": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "options": { "type": "array", "minItems": 1, "items": {
+                "oneOf": [
+                  { "type": ["string", "number", "boolean"] },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["value"],
+                    "properties": {
+                      "value": { "type": ["string", "number", "boolean"], "description": "What the command receives, and what defaults match." },
+                      "label": { "type": "string", "description": "What the form shows instead of the value." }
+                    }
+                  }
+                ]
+              } },
             "default": {
               "oneOf": [
                 { "type": "string" }, { "type": "number" }, { "type": "boolean" },
