@@ -1,6 +1,6 @@
 # Lazycmd: plan
 
-A lazygit-style TUI for running scripts. It has global and per-project commands, context-aware menus (pom, package.json, Vite config), huh forms for parameters, streaming output in a large panel, background jobs, and interactive prompts handled inside the app.
+A lazygit-style TUI for running scripts. It has global and per-project commands, context-aware menus (pom, package.json, Vite config), huh forms for parameters, streaming output in a large panel, jobs that keep running while you start others, and interactive prompts handled inside the app.
 
 Design mock (main view, parameter form, prompt popup): https://claude.ai/artifact/VmyRMBGae9bZpr85j9jSnX
 
@@ -51,7 +51,7 @@ Rules:
 ```
 
 - A plain executable in a `scripts/` dir becomes a command named after the file, with no params.
-- A sidecar `<script>.lazycmd.yaml` adds description, params and mode to that script. The `.lazycmd.yaml` suffix keeps it from colliding with unrelated YAML files.
+- A sidecar `<script>.lazycmd.yaml` adds description, params and args to that script. The `.lazycmd.yaml` suffix keeps it from colliding with unrelated YAML files.
 - `commands.yaml` holds commands that are inline (`run:`) or that point at a script (`script:`) and carry their own spec.
 ## Command spec
 
@@ -62,7 +62,6 @@ One schema, used by project files, sidecars and features:
 commands:
   cloud-sql-proxy:
     desc: Start the Cloud SQL proxy
-    mode: background          # panel (default) | background
     params:
       - name: instance
         type: select
@@ -126,10 +125,10 @@ params:
 - Each run is a PTY-backed job with its own buffer, status, duration and exit code. Buffers live outside the Bubble Tea model.
 - Output panel: `bubbles/viewport`, follow-tail by default, stop following when the user scrolls up, capped scrollback (around 10k lines), `/` search, `y` copy.
 - Every run is also teed to a log file.
-- Jobs list shows running, background, needs-input, succeeded and failed jobs. Background jobs (proxy, dev server) stay alive while you run other commands, with stop and restart keys.
+- Jobs list shows running, needs-input, succeeded and failed jobs. Every job (proxy, dev server, build) stays alive while you run other commands, with stop and restart keys; there is no separate background mode.
 - Interactive input:
   1. **Focus mode.** Forward keys to the PTY (runes as-is, Enter as `\r`, arrows as escape sequences, Ctrl-C as `\x03`). A reserved key leaves the mode.
-  2. **Prompt detection.** Output pauses without a trailing newline for ~300 ms and the tail looks like a prompt (`[y/N]`, `?`, `:`). Open a popup with a `textinput`. Check the PTY's `ECHO` flag via `x/sys/unix` to mask passwords. Background jobs get a "needs input" badge instead of stealing focus.
+  2. **Prompt detection.** Output pauses without a trailing newline for ~300 ms and the tail looks like a prompt (`[y/N]`, `?`, `:`). Open a popup with a `textinput`. Check the PTY's `ECHO` flag via `x/sys/unix` to mask passwords. A job that isn't the one shown in the output panel gets a "needs input" badge instead of stealing focus.
   3. **Embedded terminal emulator** for full-screen programs (`vim`, `less`, `psql`). Evaluate Charm's `x/vt` and community components before committing. Keep `tea.ExecProcess` (suspend and resume) as the fallback.
 
 ## Project profiles
@@ -171,7 +170,7 @@ type Feature interface {
 |---|---|---|
 | maven | `pom.xml` | lifecycle phases; module and profile params from the pom (`encoding/xml`, cached by mtime); declared linters (spotless, checkstyle, spotbugs, pmd) |
 | npm | `package.json` | scripts, workspaces, package manager chosen from the lockfile |
-| vite | `vite.config.*` | `dev` and `preview` (background), `build` |
+| vite | `vite.config.*` | `dev`, `preview`, `build` |
 | git | `.git` | fetch and prune, stashes, worktrees, actions on the current branch |
 
 - Features are on by default and show only when their files are detected (parsing only, nothing executes). `config.yaml` can turn some off (`disable: [git]`), re-enable them (`features: [git]`) and set feature settings such as `maven.default_profile`. Global is applied first, then the project.
@@ -201,6 +200,6 @@ type Feature interface {
 - `creack/pty` is Unix-only. Windows would need ConPTY.
 
 ## Open questions
-- Whether to keep `mode: background` as an explicit field or infer it from long-running commands.
+- ~~`mode: background`~~ Removed: every job is just a job. Any job keeps running while you run others, so there is nothing to distinguish.
 - Format for the usage log (JSON file vs SQLite).
 - ~~Name~~ Resolved: renamed from "lazycast" (clashes with an existing GitHub project) to **lazycmd**, with `lc` as the short alias. Still worth checking Homebrew and the GitHub org/module path before publishing.

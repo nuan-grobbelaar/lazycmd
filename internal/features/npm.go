@@ -125,7 +125,6 @@ func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 		cmd := config.ResolvedCommand{
 			ID:   namespacedID("npm", name),
 			Name: namespacedName("npm", name),
-			Mode: config.ModePanel,
 			Run:  pm + " run " + name,
 		}
 		if len(workspaces) > 0 {

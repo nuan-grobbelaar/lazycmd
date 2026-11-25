@@ -42,7 +42,6 @@ func (s Status) String() string {
 type Job struct {
 	ID   string
 	Name string
-	Mode config.Mode
 
 	Buffer *OutputBuffer
 
@@ -76,7 +75,6 @@ func Start(id string, resolved config.ResolvedCommand, values map[string]string,
 	j := &Job{
 		ID:        id,
 		Name:      resolved.Name,
-		Mode:      resolved.Mode,
 		Buffer:    &OutputBuffer{},
 		status:    StatusRunning,
 		startedAt: time.Now(),

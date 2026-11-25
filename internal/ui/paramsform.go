@@ -33,6 +33,8 @@ type paramsForm struct {
 	boolVals  map[string]*bool
 	multiVals map[string]*[]string
 
+	notice string // shown in the modal when run-now is refused
+
 	cacheMu sync.Mutex
 	cache   map[string][]string
 }
@@ -303,4 +305,25 @@ func shellQuote(a string) string {
 		return a
 	}
 	return "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+}
+
+// problems lists what stops the form from running right now: a required
+// string param that is empty, or a value that doesn't match its pattern.
+// It is the same check each field applies when you press enter on it, so
+// "run now" never accepts anything the field-by-field path would reject.
+func (pf *paramsForm) problems() []string {
+	var out []string
+	for _, p := range pf.cmd.Params {
+		if p.Type != config.ParamString && p.Type != "" {
+			continue
+		}
+		v := pf.strVals[p.Name]
+		if v == nil {
+			continue
+		}
+		if err := stringValidator(p)(*v); err != nil {
+			out = append(out, err.Error())
+		}
+	}
+	return out
 }

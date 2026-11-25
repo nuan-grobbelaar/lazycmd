@@ -194,15 +194,11 @@ func TestViteDetectVariousExtensions(t *testing.T) {
 		}
 	}
 
-	cmds, _ := Vite{}.Commands(t.TempDir(), nil)
-	var devIsBackground bool
-	for _, c := range cmds {
-		if c.Name == "vite: dev" {
-			devIsBackground = c.Mode == config.ModeBackground
+	got := names(t, Vite{}, t.TempDir(), nil)
+	for _, want := range []string{"vite: dev", "vite: preview", "vite: build"} {
+		if !contains(got, want) {
+			t.Errorf("missing %q in %v", want, got)
 		}
-	}
-	if !devIsBackground {
-		t.Error("vite: dev should be background mode")
 	}
 }
 

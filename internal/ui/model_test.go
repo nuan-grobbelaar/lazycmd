@@ -368,3 +368,79 @@ func TestHeaderShowsProfileName(t *testing.T) {
 		t.Errorf("header = %q, want it to show the profile name", h)
 	}
 }
+
+func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
+	groups := []config.Group{{Title: "Global", Commands: []config.ResolvedCommand{{
+		ID: "g:greet", Name: "greet", Run: `echo "hi $LC_WHO from $LC_ENV"`,
+		Params: []config.Param{
+			{Name: "who", Type: config.ParamString, Required: true},
+			{Name: "env", Type: config.ParamSelect, Options: []string{"dev", "prod"}},
+			{Name: "tag", Type: config.ParamString, Pattern: `^[a-z]+$`},
+		},
+	}}}}
+	m := ready(t, groups, t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // open the form
+	if m.activeForm == nil {
+		t.Fatal("form did not open")
+	}
+	if strings.Contains(m.keyBarText(), "run now") {
+		t.Error("run-now hint shown while a required field is empty")
+	}
+
+	// Refused while 'who' is empty: form stays open with a notice.
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if m.activeForm == nil || m.activeJob != nil {
+		t.Fatal("ctrl+j must not run with a required field empty")
+	}
+	if !strings.Contains(m.activeForm.notice, "who is required") {
+		t.Errorf("notice = %q", m.activeForm.notice)
+	}
+	if !strings.Contains(m.View(), "who is required") {
+		t.Error("the refusal reason should be visible in the modal")
+	}
+
+	// Fill only the first field, never tabbing through the rest.
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("sam")})
+	if !strings.Contains(m.keyBarText(), "alt+enter") || !strings.Contains(m.keyBarText(), "run now") {
+		t.Errorf("hint should read alt+enter run now once required fields are set; got %q", m.keyBarText())
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if m.activeForm != nil || m.activeJob == nil {
+		t.Fatal("ctrl+j should have run the command")
+	}
+	t.Cleanup(m.Shutdown)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s, _, _ := m.activeJob.job.Snapshot(); s != jobs.StatusRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	out, _ := m.activeJob.job.Buffer.Snapshot()
+	if !strings.Contains(out, "hi sam from dev") {
+		t.Errorf("output = %q, want the typed value and the select's default option", out)
+	}
+}
+
+func TestRunNowRefusesPatternMismatch(t *testing.T) {
+	groups := []config.Group{{Title: "Global", Commands: []config.ResolvedCommand{{
+		ID: "g:x", Name: "x", Run: "true",
+		Params: []config.Param{{Name: "tag", Type: config.ParamString, Default: "BAD", Pattern: `^[a-z]+$`}},
+	}}}}
+	m := ready(t, groups, t.TempDir(), "/repo")
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if m.activeForm == nil || m.activeJob != nil {
+		t.Fatal("a value that fails its pattern must not run")
+	}
+}
+
+func TestRunNowAlsoBoundToAltEnter(t *testing.T) {
+	if !isRunNowKey(tea.KeyMsg{Type: tea.KeyEnter, Alt: true}) {
+		t.Error("alt+enter should be a run-now key")
+	}
+	if isRunNowKey(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Error("plain enter must keep its next-field meaning")
+	}
+}

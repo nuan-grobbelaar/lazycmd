@@ -16,7 +16,6 @@ func AdhocGroup() Group {
 			ID:   AdhocID,
 			Name: "run command…",
 			Desc: "Type any shell command and run it as a job in this directory.",
-			Mode: ModePanel,
 			Params: []Param{
 				{Name: "command", Type: ParamString, Required: true},
 			},

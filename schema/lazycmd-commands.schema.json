@@ -41,11 +41,6 @@
       "additionalProperties": false,
       "properties": {
         "desc": { "type": "string" },
-        "mode": {
-          "type": "string",
-          "enum": ["panel", "background"],
-          "default": "panel"
-        },
         "params": {
           "type": "array",
           "items": { "$ref": "#/definitions/param" }

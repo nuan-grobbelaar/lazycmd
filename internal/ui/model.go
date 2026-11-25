@@ -257,26 +257,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // everything has to pass through here while a form is open, not just
 // tea.KeyMsg.
 func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		m.activeForm.notice = ""
+		if isRunNowKey(key) {
+			if problems := m.activeForm.problems(); len(problems) > 0 {
+				m.activeForm.notice = "can't run yet: " + strings.Join(problems, "; ")
+				return m, nil
+			}
+			return m.submitForm()
+		}
+	}
+
 	updated, cmd := m.activeForm.form.Update(msg)
 	m.activeForm.form = updated.(*huh.Form)
 
 	switch m.activeForm.form.State {
 	case huh.StateCompleted:
-		cmdSpec := m.activeForm.cmd
-		values := m.activeForm.values()
-		mode := m.pendingRunMode
-		m.activeForm = nil
-		m.pendingRunMode = runPanel
-		if mode == runTerminal {
-			return m.runInTerminal(cmdSpec, values)
-		}
-		return m.startJob(cmdSpec, values)
+		return m.submitForm()
 	case huh.StateAborted:
 		m.activeForm = nil
 		m.pendingRunMode = runPanel
 		return m, nil
 	}
 	return m, cmd
+}
+
+// isRunNowKey is the "run with the answers so far" key. Terminals send
+// shift+enter as a plain enter, which Bubble Tea v1 can't tell apart from
+// enter, so it works only where the terminal is set to send something
+// else for it; ctrl+j (a newline) and alt+enter work everywhere the
+// terminal passes them through.
+func isRunNowKey(k tea.KeyMsg) bool {
+	switch k.String() {
+	case "ctrl+j", "alt+enter", "shift+enter":
+		return true
+	}
+	return false
+}
+
+// submitForm closes the open form and runs its command with the current
+// answers, in the mode (panel job or real terminal) it was opened for.
+func (m Model) submitForm() (tea.Model, tea.Cmd) {
+	cmdSpec := m.activeForm.cmd
+	values := m.activeForm.values()
+	mode := m.pendingRunMode
+	m.activeForm = nil
+	m.pendingRunMode = runPanel
+	if mode == runTerminal {
+		return m.runInTerminal(cmdSpec, values)
+	}
+	return m.startJob(cmdSpec, values)
 }
 
 // updatePoll runs on every tick while any job is running: it checks
@@ -870,11 +900,18 @@ func (m Model) renderFormModal() string {
 		Render(dim.Render(previewText))
 	boxLines := strings.Count(previewBox, "\n") + 1
 
+	notice := ""
+	noticeLines := 0
+	if m.activeForm.notice != "" {
+		notice = lipgloss.NewStyle().Foreground(colorRed).Render(ansi.Wrap(m.activeForm.notice, inner-2, "")) + "\n"
+		noticeLines = strings.Count(notice, "\n")
+	}
+
 	// borders + blank line above the box + huh's trailing line
-	formH := max(3, height-2-headLines-boxLines-2)
+	formH := max(3, height-2-headLines-boxLines-2-noticeLines)
 	m.activeForm.form = m.activeForm.form.WithWidth(inner).WithHeight(formH)
 
-	content := head + m.activeForm.form.View() + "\n\n" + previewBox
+	content := head + m.activeForm.form.View() + "\n" + notice + "\n" + previewBox
 	return renderPanel(m.activeForm.cmd.Name, content, width, height, true)
 }
 
@@ -892,8 +929,6 @@ func (m Model) renderPromptModal() string {
 // rowMeta is the dim right-aligned annotation on a command row.
 func rowMeta(c config.ResolvedCommand) string {
 	switch {
-	case c.Mode == config.ModeBackground:
-		return "bg"
 	case len(c.Params) == 1:
 		return "1 param"
 	case len(c.Params) > 1:
@@ -949,8 +984,6 @@ func jobIcon(tj *trackedJob, status jobs.Status) string {
 	switch {
 	case tj.needsInput:
 		return lipgloss.NewStyle().Foreground(colorAmber).Render("?")
-	case status == jobs.StatusRunning && tj.cmd.Mode == config.ModeBackground:
-		return lipgloss.NewStyle().Foreground(colorAccent).Render("●")
 	case status == jobs.StatusRunning:
 		return lipgloss.NewStyle().Foreground(colorBlue).Render("◐")
 	case status == jobs.StatusSucceeded:
@@ -980,9 +1013,6 @@ func (m Model) renderJobsList(width int) string {
 		detail := fmt.Sprintf("%d:%02d", int(d.Minutes()), int(d.Seconds())%60)
 		if status != jobs.StatusRunning && d < time.Minute {
 			detail = d.String()
-		}
-		if tj.cmd.Mode == config.ModeBackground && status == jobs.StatusRunning {
-			detail = "bg " + detail
 		}
 		right := dimStyle.Render(detail + " ")
 		if tj.needsInput {
@@ -1036,7 +1066,11 @@ func keyBar(pairs ...string) string {
 func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
-		return keyBar("tab", "next field", "enter", "next/run", "esc", "cancel")
+		hints := []string{"tab", "next field", "enter", "next/run"}
+		if len(m.activeForm.problems()) == 0 {
+			hints = append(hints, "alt+enter", "run now")
+		}
+		return keyBar(append(hints, "esc", "cancel")...)
 	case m.promptActive:
 		return keyBar("enter", "send", "esc", "dismiss, job keeps waiting")
 	case m.inputFocus:
@@ -1080,6 +1114,7 @@ func (m Model) renderHelp() string {
 		title.Render("Params form / filter / prompts") + "\n" +
 			row("tab/shift+tab", "move between fields") + "\n" +
 			row("enter", "confirm a field, or submit the form on the last one") + "\n" +
+			row("alt+enter, ctrl+j", "run now, once every required field is set") + "\n" +
 			row("esc", "cancel"),
 
 		title.Render("Global") + "\n" +

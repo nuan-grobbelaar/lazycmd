@@ -48,7 +48,11 @@ On macOS, option+1/2/3 types `¡ ™ £` unless your terminal treats Option as M
 
 In a params form: `tab`/`shift+tab` move between fields, `enter` confirms a field and submits on the last one, `esc` cancels.
 
-When a job stops at a prompt (`[y/N]`, `Password:`, …) a popup appears for the active job and takes your answer (`enter` sends, `esc` dismisses; typing is masked when the program turned echo off). A background job that asks shows `needs input` in the Jobs panel instead of taking focus.
+**Run now:** `alt+enter` (or `ctrl+j`) runs the command straight away with the answers so far, without stepping through the remaining fields. It is refused, with the reason shown in the form, while a required field is empty or a value doesn't match its `pattern`; the `alt+enter run now` hint in the bottom bar appears only when the form is ready to run. Selects and bools use whatever they currently show (their default or first option).
+
+Terminals send `shift+enter` as a plain `enter`, which a terminal UI cannot tell apart, so it can't be used directly. If you want it anyway, make your terminal send a newline for it: in Ghostty `keybind = shift+enter=text:\n`, in iTerm2 a profile key mapping of Shift+Return to "Send Hex Code" `0x0A`. lazycmd then sees `ctrl+j`, which also runs the form.
+
+When a job stops at a prompt (`[y/N]`, `Password:`, …) a popup appears for the active job and takes your answer (`enter` sends, `esc` dismisses; typing is masked when the program turned echo off). A job that isn't the one shown in the Output panel shows `needs input` in the Jobs panel instead of taking focus; select it there to answer.
 
 Output keeps colours and styles but drops screen-control sequences (clear screen, cursor movement, titles), so programs like `vite dev` can't disturb the UI. Tabs are expanded to 8 columns. Scrollback is capped at 10 000 lines.
 
@@ -100,7 +104,6 @@ One shape is used everywhere: sidecars, `commands.yaml` entries and files a prof
 | Key | Type | Meaning |
 |---|---|---|
 | `desc` | string | description, shown at the top of the params form |
-| `mode` | `panel` (default) or `background` | `background` marks long-running commands (proxies, dev servers): they show `bg` and a green `●` in the lists. Any job keeps running while you run others; `mode` only changes how it is labelled |
 | `params` | list | the form's fields, see [Params](#params) |
 | `run` | string | inline shell body, run with `sh -c` |
 | `script` | string | path to a script (relative to the file that names it) |
@@ -110,7 +113,6 @@ In `commands.yaml` an entry must set exactly one of `run` or `script`. In a side
 
 ```yaml
 desc: Deploy a service
-mode: background
 params:
   - { name: env, type: select, options: [dev, staging, prod] }
   - { name: service, type: select, options_cmd: ls services, depends_on: [env] }
@@ -174,7 +176,7 @@ args: ["--env", "{env}", "--tag={tag}"]
 
 ## Plain scripts and sidecars
 
-A script with no sidecar is a command with no params. Add `<script-name>.lazycmd.yaml` beside it to give it a description, a form, a mode or arguments. The sidecar is a [command spec](#command-spec) without the `commands:` wrapper:
+A script with no sidecar is a command with no params. Add `<script-name>.lazycmd.yaml` beside it to give it a description, a form or arguments. The sidecar is a [command spec](#command-spec) without the `commands:` wrapper:
 
 ```yaml
 # deploy-staging.lazycmd.yaml
@@ -193,7 +195,6 @@ A broken sidecar produces a warning and that script is skipped. The `.lazycmd.ya
 commands:
   cloud-sql-proxy:
     desc: Start the Cloud SQL proxy
-    mode: background
     params:
       - name: instance
         type: select
@@ -239,7 +240,7 @@ Features only **read files** (never run `mvn`, `npm`, `git` to find out what exi
 |---|---|---|
 | `maven` | `pom.xml` | the lifecycle phases (`validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`) plus `spotless:check`, `checkstyle:check`, `spotbugs:check`, `pmd:check` when the pom declares those plugins |
 | `npm` | `package.json` | one command per script. The runner comes from the lockfile: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, otherwise npm |
-| `vite` | `vite.config.*` | `dev` and `preview` (background), `build` |
+| `vite` | `vite.config.*` | `dev`, `preview`, `build` |
 | `git` | `.git` | `fetch --prune`, `pull`, `push`, `stash`, `stash pop`, `worktree list` |
 
 Params added from your files:

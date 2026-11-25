@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -52,9 +53,6 @@ func TestPlainScriptNeedsNoConfig(t *testing.T) {
 	cmd := findCommand(groups, "Global", "clean-docker")
 	if cmd == nil {
 		t.Fatalf("expected global command clean-docker, got groups %+v", groups)
-	}
-	if cmd.Mode != ModePanel {
-		t.Errorf("expected default mode panel, got %q", cmd.Mode)
 	}
 }
 
@@ -106,7 +104,6 @@ func TestProjectCommandsYAML(t *testing.T) {
 commands:
   cloud-sql-proxy:
     desc: Start the Cloud SQL proxy
-    mode: background
     params:
       - name: port
         type: string
@@ -126,9 +123,6 @@ commands:
 	proxy := findCommand(groups, "This project", "cloud-sql-proxy")
 	if proxy == nil {
 		t.Fatalf("expected cloud-sql-proxy, got %+v", groups)
-	}
-	if proxy.Mode != ModeBackground {
-		t.Errorf("mode = %q, want background", proxy.Mode)
 	}
 	if proxy.Run == "" {
 		t.Errorf("expected run to be set")
@@ -198,5 +192,22 @@ func TestNoProjectDirIsFine(t *testing.T) {
 	}
 	if len(groups) != 0 {
 		t.Fatalf("expected no groups, got %+v", groups)
+	}
+}
+
+func TestOldModeKeyIsNowAnError(t *testing.T) {
+	proj := t.TempDir()
+	writeFile(t, filepath.Join(proj, "commands.yaml"), `
+commands:
+  proxy:
+    mode: background
+    run: echo hi
+`)
+	groups, warnings := Discover(filepath.Join(proj, "noglobal"), proj)
+	if findCommand(groups, "This project", "proxy") != nil {
+		t.Error("a command still using the removed mode: key should not load silently")
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "mode") {
+		t.Errorf("warnings = %v, want one naming the unknown mode field", warnings)
 	}
 }

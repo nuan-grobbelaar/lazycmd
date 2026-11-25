@@ -19,7 +19,6 @@ type ResolvedCommand struct {
 	ID         string
 	Name       string
 	Desc       string
-	Mode       Mode
 	Params     []Param
 	Run        string
 	ScriptPath string
@@ -137,7 +136,7 @@ func scanScripts(dir, scope string, warnings []string) ([]ResolvedCommand, []str
 // upgraded by a sidecar (<name>.lazycmd.yaml) next to it if one exists.
 func scriptCommand(dir, file, scope string) (ResolvedCommand, error) {
 	name := strings.TrimSuffix(file, filepath.Ext(file))
-	cmd := ResolvedCommand{ID: scope + ":" + name, Name: name, Mode: ModePanel, ScriptPath: filepath.Join(dir, file)}
+	cmd := ResolvedCommand{ID: scope + ":" + name, Name: name, ScriptPath: filepath.Join(dir, file)}
 
 	sidecarPath := filepath.Join(dir, name+sidecarSuffix)
 	if _, err := os.Stat(sidecarPath); err == nil {
@@ -183,7 +182,7 @@ func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
 			warnings = append(warnings, fmt.Sprintf("%s: command %q must set exactly one of run or script", path, name))
 			continue
 		}
-		cmd := ResolvedCommand{ID: "project:" + name, Name: name, Mode: ModePanel}
+		cmd := ResolvedCommand{ID: "project:" + name, Name: name}
 		applySpec(&cmd, spec)
 		if hasScript {
 			cmd.ScriptPath = filepath.Join(projectDir, spec.Script)
@@ -199,9 +198,6 @@ func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
 
 func applySpec(cmd *ResolvedCommand, spec Command) {
 	cmd.Desc = spec.Desc
-	if spec.Mode != "" {
-		cmd.Mode = spec.Mode
-	}
 	cmd.Params = spec.Params
 	cmd.Run = spec.Run
 	cmd.Args = spec.Args

@@ -130,7 +130,6 @@ func mavenCommand(goal string, params []config.Param) config.ResolvedCommand {
 	return config.ResolvedCommand{
 		ID:     namespacedID("maven", goal),
 		Name:   namespacedName("maven", goal),
-		Mode:   config.ModePanel,
 		Params: params,
 		Run:    mavenRun + goal,
 		Preview: func(v map[string]string) string {

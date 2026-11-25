@@ -25,8 +25,8 @@ func (Vite) Detect(repoRoot string) (bool, string) {
 // coupling for three fixed commands.
 func (Vite) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
 	return []config.ResolvedCommand{
-		{ID: namespacedID("vite", "dev"), Name: namespacedName("vite", "dev"), Mode: config.ModeBackground, Run: "npx vite dev"},
-		{ID: namespacedID("vite", "preview"), Name: namespacedName("vite", "preview"), Mode: config.ModeBackground, Run: "npx vite preview"},
-		{ID: namespacedID("vite", "build"), Name: namespacedName("vite", "build"), Mode: config.ModePanel, Run: "npx vite build"},
+		{ID: namespacedID("vite", "dev"), Name: namespacedName("vite", "dev"), Run: "npx vite dev"},
+		{ID: namespacedID("vite", "preview"), Name: namespacedName("vite", "preview"), Run: "npx vite preview"},
+		{ID: namespacedID("vite", "build"), Name: namespacedName("vite", "build"), Run: "npx vite build"},
 	}, nil
 }

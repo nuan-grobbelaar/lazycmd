@@ -31,7 +31,6 @@ func (Git) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 		cmds = append(cmds, config.ResolvedCommand{
 			ID:   namespacedID("git", a.name),
 			Name: namespacedName("git", a.name),
-			Mode: config.ModePanel,
 			Run:  a.run,
 		})
 	}

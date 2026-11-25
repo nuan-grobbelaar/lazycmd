@@ -174,7 +174,7 @@ func loadSidecarInclude(dir, name string) ([]ResolvedCommand, []string) {
 	if err := decodeStrict(sidecar, &spec); err != nil {
 		return nil, []string{err.Error()}
 	}
-	cmd := ResolvedCommand{ID: "project:" + name, Name: name, Mode: ModePanel}
+	cmd := ResolvedCommand{ID: "project:" + name, Name: name}
 	applySpec(&cmd, spec)
 
 	switch {
