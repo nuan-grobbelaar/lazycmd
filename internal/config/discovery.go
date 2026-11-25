@@ -24,6 +24,13 @@ type ResolvedCommand struct {
 	ScriptPath string
 	Args       []string // script arguments, with {param} placeholders; see args.go
 
+	// Shadows is the path of the global script this project command
+	// hides because it has the same name; empty when it hides nothing.
+	// Set by discovery, never decoded from YAML. The UI marks such a
+	// command and warns before its first run, since a repo you cloned
+	// can otherwise take over the name of a script you run by habit.
+	Shadows string
+
 	// Preview, when set (feature commands only, never decoded from
 	// YAML), renders the command line the params form shows for the
 	// current answers. Needed where Run builds its arguments
@@ -76,9 +83,17 @@ func DiscoverWith(globalDir, projectDir string, extra []ResolvedCommand) (groups
 		projectCmds = append(projectCmds, c)
 	}
 
+	globalByName := make(map[string]string, len(globalCmds))
+	for _, c := range globalCmds {
+		globalByName[c.Name] = c.ScriptPath
+	}
 	shadowed := make(map[string]bool, len(projectCmds))
-	for _, c := range projectCmds {
+	for i := range projectCmds {
+		c := &projectCmds[i]
 		shadowed[c.Name] = true
+		if path, ok := globalByName[c.Name]; ok {
+			c.Shadows = path
+		}
 	}
 	var global []ResolvedCommand
 	for _, c := range globalCmds {
@@ -97,6 +112,18 @@ func DiscoverWith(globalDir, projectDir string, extra []ResolvedCommand) (groups
 		groups = append(groups, Group{Title: "This project", Commands: projectCmds})
 	}
 	return groups, warnings
+}
+
+// ProjectCommands loads only the repo's own commands from projectDir
+// (scripts/ plus commands.yaml), the set a trust decision covers. It
+// reads files and runs nothing. Nil when projectDir doesn't exist.
+func ProjectCommands(projectDir string) ([]ResolvedCommand, []string) {
+	if info, err := os.Stat(projectDir); err != nil || !info.IsDir() {
+		return nil, nil
+	}
+	cmds, warnings := scanScripts(filepath.Join(projectDir, "scripts"), "project", nil)
+	fileCmds, fileWarnings := loadCommandsFile(projectDir)
+	return append(cmds, fileCmds...), append(warnings, fileWarnings...)
 }
 
 func sortByName(cmds []ResolvedCommand) {
@@ -145,7 +172,7 @@ func scriptCommand(dir, file, scope string) (ResolvedCommand, error) {
 			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
 		}
 		applySpec(&cmd, spec)
-		if err := validateArgs(cmd); err != nil {
+		if err := validateCommand(cmd); err != nil {
 			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
 		}
 	}
@@ -187,7 +214,7 @@ func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
 		if hasScript {
 			cmd.ScriptPath = filepath.Join(projectDir, spec.Script)
 		}
-		if err := validateArgs(cmd); err != nil {
+		if err := validateCommand(cmd); err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: command %q: %v", path, name, err))
 			continue
 		}

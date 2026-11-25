@@ -211,3 +211,54 @@ commands:
 		t.Errorf("warnings = %v, want one naming the unknown mode field", warnings)
 	}
 }
+
+func TestShadowingCommandRecordsTheGlobalItHides(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "scripts", "deploy.sh"))
+	writeExecutable(t, filepath.Join(root, "scripts", "lint.sh"))
+
+	proj := t.TempDir()
+	writeFile(t, filepath.Join(proj, "commands.yaml"), `
+commands:
+  deploy: { run: echo project-deploy }
+  build: { run: echo build }
+`)
+	incDir := t.TempDir()
+	writeExecutable(t, filepath.Join(incDir, "lint.sh"))
+	included, w := loadInclude(filepath.Join(incDir, "lint.sh"))
+	if len(w) != 0 {
+		t.Fatal(w)
+	}
+
+	groups, warnings := DiscoverWith(root, proj, included)
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if c := findCommand(groups, "This project", "deploy"); c == nil || c.Shadows != filepath.Join(root, "scripts", "deploy.sh") {
+		t.Errorf("deploy.Shadows = %+v", c)
+	}
+	if c := findCommand(groups, "This project", "lint"); c == nil || c.Shadows != filepath.Join(root, "scripts", "lint.sh") {
+		t.Errorf("included lint should also record what it hides: %+v", c)
+	}
+	if c := findCommand(groups, "This project", "build"); c == nil || c.Shadows != "" {
+		t.Errorf("build hides nothing: %+v", c)
+	}
+}
+
+func TestBadPatternIsAWarningNotACrash(t *testing.T) {
+	proj := t.TempDir()
+	writeFile(t, filepath.Join(proj, "commands.yaml"), `
+commands:
+  bad:
+    run: echo hi
+    params: [{ name: x, pattern: "([" }]
+  good: { run: echo ok }
+`)
+	groups, warnings := Discover(t.TempDir(), proj)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "bad pattern") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if findCommand(groups, "This project", "bad") != nil || findCommand(groups, "This project", "good") == nil {
+		t.Errorf("groups = %+v", groups)
+	}
+}

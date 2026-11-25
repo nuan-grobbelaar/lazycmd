@@ -10,6 +10,7 @@ import (
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/features"
+	"lazycmd/internal/trust"
 	"lazycmd/internal/ui"
 )
 
@@ -44,24 +45,59 @@ func main() {
 		profileFeatures = append(profileFeatures, profile.File.FeaturesFile)
 	}
 
-	groups, discWarnings := config.DiscoverWith(globalDir, projectDir, included)
-	warnings = append(warnings, discWarnings...)
-	groups = append([]config.Group{config.AdhocGroup()}, groups...)
+	// build assembles the full command list. With repoCommands false the
+	// repo's own .lazycmd/ commands are left out (its config.yaml still
+	// applies: it only switches features and settings, it runs nothing).
+	build := func(repoCommands bool) ([]config.Group, []string) {
+		dir := projectDir
+		if !repoCommands {
+			dir = ""
+		}
+		var w []string
+		groups, discWarnings := config.DiscoverWith(globalDir, dir, included)
+		w = append(w, discWarnings...)
+		groups = append([]config.Group{config.AdhocGroup()}, groups...)
 
-	enabled, settings, featCfgWarnings := config.EnabledFeatures(globalDir, projectDir, profileFeatures...)
-	featureGroups, featRunWarnings := features.Discover(cwd, enabled, settings)
-	groups = append(groups, featureGroups...)
-	warnings = append(warnings, featCfgWarnings...)
-	warnings = append(warnings, featRunWarnings...)
+		enabled, settings, featCfgWarnings := config.EnabledFeatures(globalDir, projectDir, profileFeatures...)
+		featureGroups, featRunWarnings := features.Discover(cwd, enabled, settings)
+		groups = append(groups, featureGroups...)
+		w = append(w, featCfgWarnings...)
+		w = append(w, featRunWarnings...)
 
-	// Defaults go last so they can reach feature commands too.
-	if profile != nil {
-		warnings = append(warnings, config.ApplyDefaults(groups, profile.File.Defaults)...)
+		// Defaults go last so they can reach feature commands too.
+		if profile != nil {
+			w = append(w, config.ApplyDefaults(groups, profile.File.Defaults)...)
+		}
+		return groups, w
+	}
+
+	fullGroups, buildWarnings := build(true)
+	warnings = append(warnings, buildWarnings...)
+
+	// A repo's own commands are listed only once the user has allowed
+	// them (and again after they change); see package trust.
+	repoCmds, _ := config.ProjectCommands(projectDir)
+	groups := fullGroups
+	var pending *ui.PendingTrust
+	if len(repoCmds) > 0 {
+		fingerprint := trust.Fingerprint(projectDir, repoCmds)
+		if state := trust.Load(stateDir).Check(cwd, fingerprint); state != trust.Allowed {
+			groups, _ = build(false)
+			pending = &ui.PendingTrust{
+				State:       state,
+				Commands:    repoCmds,
+				Fingerprint: fingerprint,
+				FullGroups:  fullGroups,
+			}
+		}
 	}
 
 	model := ui.New(groups, warnings, stateDir, cwd)
 	if profile != nil {
 		model = model.WithProfile(strings.TrimSuffix(filepath.Base(profile.Source), filepath.Ext(profile.Source)))
+	}
+	if pending != nil {
+		model = model.WithPendingTrust(*pending)
 	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	finalModel, err := p.Run()

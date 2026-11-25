@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -63,8 +64,33 @@ func parseArg(s string) ([]argPart, error) {
 	return parts, nil
 }
 
+// validateCommand runs the load-time checks every command spec gets,
+// whatever file it came from.
+func validateCommand(cmd ResolvedCommand) error {
+	if err := validateParams(cmd); err != nil {
+		return err
+	}
+	return validateArgs(cmd)
+}
+
+// validateParams checks each param's pattern compiles, so a bad one is
+// a load warning instead of a crash when the form opens.
+func validateParams(cmd ResolvedCommand) error {
+	for _, p := range cmd.Params {
+		if p.Pattern == "" {
+			continue
+		}
+		if _, err := regexp.Compile(p.Pattern); err != nil {
+			return fmt.Errorf("param %q: bad pattern: %v", p.Name, err)
+		}
+	}
+	return nil
+}
+
 // validateArgs checks a command's args at load time: they need a script
-// to run, and may only mention params the command declares.
+// to run, and may only mention params the command declares. A secret
+// param may not be used at all: arguments are visible to every user on
+// the machine (ps), while the LC_ env var is readable only by you.
 func validateArgs(cmd ResolvedCommand) error {
 	if len(cmd.Args) == 0 {
 		return nil
@@ -72,9 +98,9 @@ func validateArgs(cmd ResolvedCommand) error {
 	if cmd.ScriptPath == "" {
 		return fmt.Errorf("args: needs a script to run; with run: use \"$LC_<NAME>\" in the shell body instead")
 	}
-	declared := map[string]bool{}
+	declared := map[string]ParamType{}
 	for _, p := range cmd.Params {
-		declared[p.Name] = true
+		declared[p.Name] = p.Type
 	}
 	for _, a := range cmd.Args {
 		parts, err := parseArg(a)
@@ -82,8 +108,15 @@ func validateArgs(cmd ResolvedCommand) error {
 			return fmt.Errorf("args: %v", err)
 		}
 		for _, p := range parts {
-			if p.param && !declared[p.text] {
+			if !p.param {
+				continue
+			}
+			typ, ok := declared[p.text]
+			if !ok {
 				return fmt.Errorf("args: {%s} in %q is not a declared param", p.text, a)
+			}
+			if typ == ParamSecret {
+				return fmt.Errorf("args: {%s} is a secret, and secrets can't be passed as arguments (any user on the machine can read them with ps); read $LC_%s in the script instead", p.text, strings.ToUpper(p.text))
 			}
 		}
 	}

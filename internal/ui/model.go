@@ -16,6 +16,8 @@ import (
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
+	"lazycmd/internal/safetext"
+	"lazycmd/internal/trust"
 	"lazycmd/internal/usage"
 )
 
@@ -77,6 +79,19 @@ type Model struct {
 	promptActive bool
 	promptInput  textinput.Model
 
+	// shadowConfirm is the first-run warning for a project command that
+	// replaces a global script of the same name; nil when not showing.
+	shadowConfirm *shadowConfirm
+	// shadowAcked holds command IDs the user already confirmed this
+	// session, so cancelling the params form doesn't ask again.
+	shadowAcked map[string]bool
+
+	// pendingTrust is set while the repo's own .lazycmd/ commands are
+	// held back waiting for the user to allow them; trustPromptOpen is
+	// whether the prompt asking that is on screen.
+	pendingTrust    *PendingTrust
+	trustPromptOpen bool
+
 	ready bool
 }
 
@@ -87,23 +102,189 @@ type flatRow struct {
 }
 
 func New(groups []config.Group, warnings []string, stateDir, projectRoot string) Model {
-	usageLog := usage.Load(stateDir)
-	now := time.Now()
-	for i := range groups {
-		if groups[i].Title == "Global" {
-			usageLog.SortByUsage(groups[i].Commands, projectRoot, now)
-		}
+	for i, w := range warnings {
+		warnings[i] = safetext.Text(w)
 	}
-
-	all := flattenGroups(groups)
-	return Model{
-		allRows:     all,
-		rows:        all,
-		cursor:      firstSelectable(all),
+	m := Model{
 		warnings:    warnings,
 		stateDir:    stateDir,
 		projectRoot: projectRoot,
-		usageLog:    usageLog,
+		usageLog:    usage.Load(stateDir),
+		shadowAcked: map[string]bool{},
+	}
+	m.setGroups(groups)
+	return m
+}
+
+// setGroups (re)builds the command list from groups: cleans their text
+// for display, orders Global by usage here, and reapplies the filter.
+func (m *Model) setGroups(groups []config.Group) {
+	sanitizeGroups(groups)
+	now := time.Now()
+	for i := range groups {
+		if groups[i].Title == "Global" {
+			m.usageLog.SortByUsage(groups[i].Commands, m.projectRoot, now)
+		}
+	}
+	m.allRows = flattenGroups(groups)
+	m.applyFilter()
+}
+
+// trustReviewID is the placeholder row standing in for the repo's
+// commands while they aren't allowed; selecting it reopens the prompt.
+const trustReviewID = "trust:review"
+
+// PendingTrust describes a repo whose own .lazycmd/ commands haven't
+// been allowed (or have changed since): which commands they are, the
+// fingerprint to remember when the user allows them, and the full
+// command list to switch to then.
+type PendingTrust struct {
+	State       trust.State
+	Commands    []config.ResolvedCommand
+	Fingerprint string
+	FullGroups  []config.Group
+}
+
+// WithPendingTrust holds the repo's commands back behind the trust
+// prompt, which opens straight away. The list shows one placeholder row
+// in their place, so declining for now still leaves a way back.
+func (m Model) WithPendingTrust(p PendingTrust) Model {
+	m.pendingTrust = &p
+	m.trustPromptOpen = true
+
+	review := config.Group{Title: "This project", Commands: []config.ResolvedCommand{{
+		ID:   trustReviewID,
+		Name: fmt.Sprintf("%d not allowed: review…", len(p.Commands)),
+	}}}
+	// The placeholder goes where the repo's commands would be: at the
+	// top of "This project" (whose profile-included commands are the
+	// user's own and stay), or as that group, after Global and before
+	// the discovered groups.
+	groups := groupsFromRows(m.allRows)
+	at := len(groups)
+	for i, g := range groups {
+		if g.Title == "This project" {
+			groups[i].Commands = append(review.Commands, g.Commands...)
+			at = -1
+			break
+		}
+		if strings.HasPrefix(g.Title, "Discovered") {
+			at = i
+			break
+		}
+	}
+	if at >= 0 {
+		groups = append(groups[:at], append([]config.Group{review}, groups[at:]...)...)
+	}
+	m.setGroups(groups)
+	return m
+}
+
+// updateTrustPrompt handles the prompt: y allows the repo's commands
+// (remembered until they change); anything else leaves them hidden for
+// now. No is the default, so a stray enter can't allow them.
+func (m Model) updateTrustPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		p := m.pendingTrust
+		m.trustPromptOpen = false
+		m.pendingTrust = nil
+		store := trust.Load(m.stateDir)
+		store.Allow(m.projectRoot, p.Fingerprint)
+		if err := store.Save(m.stateDir); err != nil {
+			m.warnings = append(m.warnings, "could not remember this repo as allowed: "+err.Error())
+		}
+		m.setGroups(p.FullGroups)
+		m.viewport.SetContent(m.activeJobBody())
+	case "ctrl+c":
+		return m, tea.Quit
+	case "n", "N", "esc", "q", "enter":
+		m.trustPromptOpen = false
+	}
+	return m, nil
+}
+
+// renderTrustPrompt asks whether to allow the repo's own commands,
+// listing each with what it runs.
+func (m Model) renderTrustPrompt() string {
+	p := m.pendingTrust
+	width := clampInt(78, 40, m.width-6)
+	inner := max(1, width-4)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	soft := lipgloss.NewStyle().Foreground(colorTextSoft)
+	yellow := lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+
+	intro := "This repo defines commands in .lazycmd/ that you haven't allowed yet:"
+	if p.State == trust.Changed {
+		intro = "This repo's commands in .lazycmd/ have changed since you allowed them:"
+	}
+
+	const maxListed = 8
+	nameW := 0
+	for i, c := range p.Commands {
+		if i < maxListed {
+			nameW = max(nameW, ansi.StringWidth(safetext.Line(c.Name)))
+		}
+	}
+	nameW = min(nameW, inner/3)
+	var lines []string
+	for i, c := range p.Commands {
+		if i == maxListed {
+			lines = append(lines, dim.Render(fmt.Sprintf("  … and %d more", len(p.Commands)-maxListed)))
+			break
+		}
+		name := ansi.Truncate(safetext.Line(c.Name), nameW, "…")
+		runs := c.Run
+		if c.ScriptPath != "" {
+			runs = m.relPath(c.ScriptPath)
+		}
+		line := "  " + name + strings.Repeat(" ", max(0, nameW-ansi.StringWidth(name))) + "  " + dim.Render(safetext.Line(runs))
+		lines = append(lines, ansi.Truncate(line, inner, "…"))
+	}
+
+	content := yellow.Render("⚠ Allow this repo's commands?") + "\n\n" +
+		soft.Render(ansi.Wrap(intro, inner, "")) + "\n\n" +
+		strings.Join(lines, "\n") + "\n\n" +
+		soft.Render(ansi.Wrap("Running one of them runs code from this repo. Allow them only if you trust it. Until you do they stay hidden; everything else works as usual.", inner, "")) + "\n\n" +
+		keyBar("y", "allow (asked again if they change)", "n/esc", "not now")
+	height := strings.Count(content, "\n") + 3
+	return renderPanelColored("Allow .lazycmd/ commands", content, width, height, colorYellow)
+}
+
+// relPath shows p relative to the repo when it's inside it, else with
+// ~ for the home folder.
+func (m Model) relPath(p string) string {
+	if rel, err := filepath.Rel(m.projectRoot, p); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return m.tildePath(p)
+}
+
+// sanitizeGroups makes every displayed string that came from a file
+// safe to draw (see package safetext): names, descriptions and
+// defaults can come from an untrusted repo. IDs, run bodies, script
+// paths and param names are left alone; they are never drawn as-is
+// (param names are cleaned where the form shows them).
+func sanitizeGroups(groups []config.Group) {
+	for gi := range groups {
+		g := &groups[gi]
+		g.Title = safetext.Line(g.Title)
+		for ci := range g.Commands {
+			c := &g.Commands[ci]
+			c.Name = safetext.Line(c.Name)
+			c.Desc = safetext.Text(c.Desc)
+			if len(c.Params) == 0 {
+				continue
+			}
+			c.Params = append([]config.Param(nil), c.Params...)
+			for pi := range c.Params {
+				if c.Params[pi].Type == config.ParamText {
+					c.Params[pi].Default = safetext.Text(c.Params[pi].Default)
+				} else {
+					c.Params[pi].Default = safetext.Line(c.Params[pi].Default)
+				}
+			}
+		}
 	}
 }
 
@@ -133,6 +314,22 @@ func flattenGroups(groups []config.Group) []flatRow {
 		}
 	}
 	return rows
+}
+
+// groupsFromRows is flattenGroups in reverse.
+func groupsFromRows(rows []flatRow) []config.Group {
+	var groups []config.Group
+	for _, r := range rows {
+		if r.isHeader {
+			groups = append(groups, config.Group{Title: r.label})
+			continue
+		}
+		if len(groups) > 0 {
+			last := &groups[len(groups)-1]
+			last.Commands = append(last.Commands, r.cmd)
+		}
+	}
+	return groups
 }
 
 func firstSelectable(rows []flatRow) int {
@@ -222,6 +419,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpActive {
 			m.helpActive = false
 			return m, nil
+		}
+		if m.trustPromptOpen {
+			return m.updateTrustPrompt(msg)
+		}
+		if m.shadowConfirm != nil {
+			return m.updateShadowConfirm(msg)
 		}
 		if m.promptActive {
 			return m.updatePromptPopup(msg)
@@ -550,6 +753,57 @@ func (m Model) updateJobsFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // terminal to the process (for vim, less, psql - anything full-screen).
 func (m Model) selectRow(mode runMode) (tea.Model, tea.Cmd) {
 	cmdSpec := m.rows[m.cursor].cmd
+	if cmdSpec.ID == trustReviewID {
+		m.trustPromptOpen = true
+		return m, nil
+	}
+	if m.needsShadowConfirm(cmdSpec) {
+		// Asked before the form opens, so nothing of the project's runs
+		// (not even an options_cmd) until the user has said yes.
+		m.shadowConfirm = &shadowConfirm{cmd: cmdSpec, mode: mode}
+		return m, nil
+	}
+	return m.openOrRun(cmdSpec, mode)
+}
+
+// shadowConfirm is the pending first-run warning for cmd, a project
+// command that replaces a global script, and how it was asked to run.
+type shadowConfirm struct {
+	cmd  config.ResolvedCommand
+	mode runMode
+}
+
+// needsShadowConfirm is true for a project command that hides a global
+// script and has never run in this repo: the first time, the user
+// confirms they mean the project's version and not their own.
+func (m Model) needsShadowConfirm(c config.ResolvedCommand) bool {
+	return c.Shadows != "" && !m.shadowAcked[c.ID] && !m.usageLog.Has(m.projectRoot, c.ID)
+}
+
+// updateShadowConfirm handles the warning: y runs the command (through
+// its form, if it has one); anything else cancels. No is the default so
+// a stray enter can't run it.
+func (m Model) updateShadowConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	sc := m.shadowConfirm
+	switch msg.String() {
+	case "y", "Y":
+		m.shadowConfirm = nil
+		if m.shadowAcked == nil {
+			m.shadowAcked = map[string]bool{}
+		}
+		m.shadowAcked[sc.cmd.ID] = true
+		return m.openOrRun(sc.cmd, sc.mode)
+	case "ctrl+c":
+		return m, tea.Quit
+	case "n", "N", "esc", "q", "enter":
+		m.shadowConfirm = nil
+	}
+	return m, nil
+}
+
+// openOrRun runs cmdSpec directly if it takes no params, or opens its
+// params form first.
+func (m Model) openOrRun(cmdSpec config.ResolvedCommand, mode runMode) (tea.Model, tea.Cmd) {
 	if len(cmdSpec.Params) == 0 {
 		if mode == runTerminal {
 			return m.runInTerminal(cmdSpec, nil)
@@ -598,7 +852,7 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 		// file name above was built from the fixed entry name instead,
 		// since typed text can contain slashes.
 		if typed := strings.TrimSpace(values["command"]); typed != "" {
-			cmdSpec.Name = typed
+			cmdSpec.Name = safetext.Line(typed)
 		}
 	}
 
@@ -758,8 +1012,12 @@ func (m Model) View() string {
 
 	base := m.renderBase()
 	switch {
+	case m.trustPromptOpen:
+		return overlayCentered(base, m.renderTrustPrompt(), m.width, m.height)
 	case m.activeForm != nil:
 		return overlayCentered(base, m.renderFormModal(), m.width, m.height)
+	case m.shadowConfirm != nil:
+		return overlayCentered(base, m.renderShadowConfirm(), m.width, m.height)
 	case m.promptActive:
 		return overlayCentered(base, m.renderPromptModal(), m.width, m.height)
 	}
@@ -826,12 +1084,14 @@ func (m Model) renderHeader() string {
 			path = "~" + rel
 		}
 	}
-	left := " " + amber.Render("lazycmd") + "  " + dim.Render(path)
+	// The folder name and .git/HEAD both come from the repo, so both
+	// are cleaned before they reach the terminal.
+	left := " " + amber.Render("lazycmd") + "  " + dim.Render(safetext.Line(path))
 	if br := gitBranch(m.projectRoot); br != "" {
-		left += "  " + dim.Render("branch") + " " + green.Render(br)
+		left += "  " + dim.Render("branch") + " " + green.Render(safetext.Line(br))
 	}
 	if m.profileName != "" {
-		left += "  " + dim.Render("profile") + " " + lipgloss.NewStyle().Foreground(colorBlue).Render(m.profileName)
+		left += "  " + dim.Render("profile") + " " + lipgloss.NewStyle().Foreground(colorBlue).Render(safetext.Line(m.profileName))
 	}
 
 	var feats []string
@@ -893,7 +1153,7 @@ func (m Model) renderFormModal() string {
 		head = dim.Render(ansi.Wrap(d, max(1, inner-2), "")) + "\n\n"
 		headLines = strings.Count(head, "\n")
 	}
-	previewText := ansi.Wrap(m.activeForm.preview(), max(1, width-8), "")
+	previewText := ansi.Wrap(safetext.Text(m.activeForm.preview()), max(1, width-8), "")
 	previewBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).BorderForeground(colorMuted).
 		Padding(0, 1).Width(max(1, width-6)).
@@ -926,6 +1186,56 @@ func (m Model) renderPromptModal() string {
 	return renderPanelColored(m.activeJob.job.Name+" · waiting for input", content, width, height, colorAmber)
 }
 
+// renderShadowConfirm draws the first-run warning for a project command
+// that replaces a global script: which script it hides, and what the
+// project's version actually runs.
+func (m Model) renderShadowConfirm() string {
+	sc := m.shadowConfirm
+	width := clampInt(72, 40, m.width-6)
+	inner := max(1, width-4)
+	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	soft := lipgloss.NewStyle().Foreground(colorTextSoft)
+	yellow := lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+
+	runs := sc.cmd.ScriptPath
+	if runs == "" {
+		runs = sc.cmd.Run
+	}
+	runs = m.tildePath(runs)
+	lines := strings.Split(strings.TrimRight(safetext.Text(runs), "\n"), "\n")
+	const maxRunLines = 6
+	if len(lines) > maxRunLines {
+		lines = append(lines[:maxRunLines], "…")
+	}
+	for i, l := range lines {
+		lines[i] = ansi.Truncate("  "+l, inner, "…")
+	}
+
+	content := yellow.Render("⚠ This project replaces one of your global scripts") + "\n\n" +
+		soft.Render(ansi.Wrap(fmt.Sprintf("%q here hides your own %s. Running it runs the project's version instead:", sc.cmd.Name, safetext.Line(m.tildePath(sc.cmd.Shadows))), inner, "")) + "\n\n" +
+		soft.Render(strings.Join(lines, "\n")) + "\n\n" +
+		dim.Render(ansi.Wrap("Asked only before its first run in this repo.", inner, "")) + "\n\n" +
+		keyBar("y", "run it", "n/esc", "cancel")
+	height := strings.Count(content, "\n") + 3
+	return renderPanelColored(sc.cmd.Name+" · replaces a global script", content, width, height, colorYellow)
+}
+
+// tildePath shortens a path under the home folder to ~/..., for display.
+func (m Model) tildePath(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok {
+			return "~/" + rel
+		}
+	}
+	return p
+}
+
+// isWarnRow marks rows drawn in yellow: a project command replacing a
+// global script, and the placeholder for commands not yet allowed.
+func isWarnRow(c config.ResolvedCommand) bool {
+	return c.Shadows != "" || c.ID == trustReviewID
+}
+
 // rowMeta is the dim right-aligned annotation on a command row.
 func rowMeta(c config.ResolvedCommand) string {
 	switch {
@@ -943,6 +1253,7 @@ func (m Model) renderList(width int) string {
 	dimStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 	filterStyle := lipgloss.NewStyle().Foreground(colorAccent)
 	selStyle := lipgloss.NewStyle().Background(colorSelBg).Foreground(lipgloss.Color("#ffffff"))
+	yellowStyle := lipgloss.NewStyle().Foreground(colorYellow)
 
 	var b strings.Builder
 	if m.filtering || m.filterQuery != "" {
@@ -970,10 +1281,20 @@ func (m Model) renderList(width int) string {
 			}
 			b.WriteString(headerStyle.Render(" " + strings.ToUpper(row.label)))
 		case i == m.cursor:
+			style := selStyle
+			if isWarnRow(row.cmd) {
+				style = style.Foreground(colorYellow)
+			}
 			line := spread(" ▸ "+row.label, rowMeta(row.cmd)+" ", width)
-			b.WriteString(selStyle.Width(width).Render(line))
+			b.WriteString(style.Width(width).Render(line))
 		default:
-			line := spread("   "+row.label, dimStyle.Render(rowMeta(row.cmd)+" "), width)
+			label := "   " + row.label
+			if isWarnRow(row.cmd) {
+				// Yellow: this project command replaces a global
+				// script of the same name.
+				label = yellowStyle.Render(label)
+			}
+			line := spread(label, dimStyle.Render(rowMeta(row.cmd)+" "), width)
 			b.WriteString(plainStyle.Render(line))
 		}
 	}
@@ -1071,6 +1392,10 @@ func (m Model) keyBarText() string {
 			hints = append(hints, "alt+enter", "run now")
 		}
 		return keyBar(append(hints, "esc", "cancel")...)
+	case m.trustPromptOpen:
+		return keyBar("y", "allow this repo's commands", "n/esc", "not now")
+	case m.shadowConfirm != nil:
+		return keyBar("y", "run the project's version", "n/esc", "cancel")
 	case m.promptActive:
 		return keyBar("enter", "send", "esc", "dismiss, job keeps waiting")
 	case m.inputFocus:
@@ -1096,6 +1421,7 @@ func (m Model) renderHelp() string {
 			row("enter", "run the selected command") + "\n" +
 			row("t", "run it with a full terminal (vim, less, psql...)") + "\n" +
 			row("/", "filter by name") + "\n" +
+			row("yellow name", "a project command replacing your global script of that name") + "\n" +
 			row("tab", "next panel") + "\n" +
 			row("alt+1/2/3", "jump to Commands / Jobs / Output") + "\n" +
 			row("←/→", "previous / next panel"),

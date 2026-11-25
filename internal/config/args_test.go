@@ -111,3 +111,44 @@ commands:
 		t.Errorf("warnings = %v", warnings)
 	}
 }
+
+// Arguments are visible to every user via ps, so a secret param may
+// reach a command only through its LC_ env var.
+func TestSecretParamsCantBeArgs(t *testing.T) {
+	cmd := ResolvedCommand{
+		Name: "login", ScriptPath: "/bin/true",
+		Params: []Param{{Name: "user"}, {Name: "token", Type: ParamSecret}},
+	}
+	for _, args := range [][]string{{"{token}"}, {"--token={token}"}, {"--user={user}", "{user}:{token}"}} {
+		cmd.Args = args
+		err := validateCommand(cmd)
+		if err == nil || !strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "$LC_TOKEN") {
+			t.Errorf("args %v: err = %v, want a secret error pointing at $LC_TOKEN", args, err)
+		}
+	}
+	cmd.Args = []string{"--user={user}"}
+	if err := validateCommand(cmd); err != nil {
+		t.Errorf("non-secret args should still load: %v", err)
+	}
+	cmd.Args = nil
+	if err := validateCommand(cmd); err != nil {
+		t.Errorf("a secret used only via env should load: %v", err)
+	}
+}
+
+func TestSidecarWithSecretArgIsSkippedWithWarning(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "scripts", "login.sh"))
+	writeFile(t, filepath.Join(dir, "scripts", "login.lazycmd.yaml"), `
+params:
+  - { name: token, type: secret }
+args: ["--token", "{token}"]
+`)
+	groups, warnings := Discover(t.TempDir(), dir)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "secret") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if findCommand(groups, "This project", "login") != nil {
+		t.Error("command with a secret in args should be skipped")
+	}
+}

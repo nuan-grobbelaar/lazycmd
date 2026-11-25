@@ -7,10 +7,11 @@ make install     # installs lazycmd and the lc alias to GOBIN (or GOPATH/bin)
 cd ~/some/repo && lc
 ```
 
-Opening lazycmd in a repo never executes anything from that repo's config. Commands only run after you select them.
+Opening lazycmd in a repo never executes anything from that repo's config. Commands only run after you select them, and a repo's own commands are only listed once you [allow them](#allowing-a-repos-commands). Text from the repo (command names, descriptions, the branch name in `.git/HEAD`, script names in `package.json`) has control characters made visible before it is drawn (ESC shows as `^[`), so a repo can't send escape sequences to your terminal.
 
 - [Screen and keys](#screen-and-keys)
 - [Where commands come from](#where-commands-come-from)
+- [Allowing a repo's commands](#allowing-a-repos-commands)
 - [Files and folders](#files-and-folders)
 - [Command spec](#command-spec)
 - [Params](#params)
@@ -66,10 +67,18 @@ The command list is grouped, top to bottom:
 4. **Discovered**: one group per detected [feature](#features) (Maven, NPM, Vite, git), labelled with its source file.
 
 Rules:
-- A project command **shadows** a global command with the same name.
+- A project command **shadows** a global command with the same name. Such a command is shown in **yellow**, and the first time you run it in a repo lazycmd stops and shows which of your scripts it hides and what it will run instead (`y` runs it, anything else cancels). This happens before its form opens, so nothing from the project runs until you say yes. After the first run in that repo it isn't asked again. Deleting `usage.json` brings the question back.
 - Feature commands are namespaced (`maven: test`, `npm: lint`) so they never collide with scripts.
 - "Most used here" comes from a usage log keyed by repo and command, with a 14-day half-life, so recent runs weigh more.
 - Files that fail to parse are skipped and reported as warnings in the Output panel's start text. They never stop lazycmd from starting.
+
+## Allowing a repo's commands
+
+A repo's `.lazycmd/` decides what its commands are called and what they run, so the first time you open a repo that defines commands, lazycmd asks before listing them. The prompt lists each command with what it runs. `y` allows them; `n`, `esc` or `enter` leaves them hidden for now, and a yellow `N not allowed: review…` row in their place reopens the prompt. Everything else (your global scripts, profile includes, discovered features, ad-hoc) works either way.
+
+The answer is remembered per repo with a fingerprint of `commands.yaml`, every file in `.lazycmd/scripts/`, and every script a command points at (even outside `.lazycmd/`). If any of that changes, for example after a `git pull`, lazycmd asks again and says the commands changed. The repo's `config.yaml` is not covered: it only switches features and settings, and runs nothing.
+
+Allowed repos are kept in `~/.local/state/lazycmd/trust.json` (readable only by you). Delete an entry, or the file, to be asked again.
 
 ## Files and folders
 
@@ -92,6 +101,7 @@ Rules:
 
 ~/.local/state/lazycmd/
   usage.json                        # usage counts
+  trust.json                        # repos whose commands you allowed
   logs/                             # one log file per run
 ```
 
@@ -140,7 +150,7 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `select` | pick one |
 | `multi` | pick several (values arrive comma-joined) |
 | `bool` | yes/no (arrives as `true` or `false`) |
-| `secret` | input with masked echo |
+| `secret` | input with masked echo; reaches the command only as `LC_NAME`, never in `args` |
 | `text` | multi-line input |
 
 `options_cmd` runs in the repo root with a 5 second timeout, with every param answered so far available as `LC_<NAME>`. Results are cached per command and answers, so a dependent select re-runs only when what it depends on changes. It only runs after you select the command, never on startup. Declare a param after the ones it `depends_on`.
@@ -173,6 +183,7 @@ args: ["--env", "{env}", "--tag={tag}"]
 - An entry that uses placeholders **and** has all of them empty is dropped. That makes optional flags: `--tag={tag}` disappears when `tag` is empty. (Put a flag and its value in one entry for this, `--tag={tag}`, not two.)
 - Bools are `true`/`false`; `multi` values are comma-joined.
 - Only declared params may be used, and `args` needs a script. With `run:` it is an error. Use `"$LC_NAME"` in the shell body instead.
+- A `secret` param can't be used in `args`; the command is skipped with a warning. A program's arguments can be read by any user on the machine (`ps`), while its environment can only be read by you, so a script gets its secrets from `$LC_NAME`.
 
 ## Plain scripts and sidecars
 
@@ -289,6 +300,7 @@ maven:
 ## State: logs and usage
 
 - `~/.local/state/lazycmd/logs/<job>.log` holds each run's output (as the program wrote it).
+- `~/.local/state/lazycmd/trust.json` holds the repos whose commands you allowed, see [above](#allowing-a-repos-commands).
 - `~/.local/state/lazycmd/usage.json` holds decayed run counts per repo and command id. It only orders the Global group; delete it to reset. A missing or corrupt file just starts fresh.
 
 ## Editor support: JSON Schemas

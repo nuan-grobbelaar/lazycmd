@@ -17,6 +17,7 @@ var (
 	colorAmber    = lipgloss.Color("#f5c26b") // keys, brand, needs-input
 	colorRed      = lipgloss.Color("#ff8294")
 	colorBlue     = lipgloss.Color("#86b6ff")
+	colorYellow   = lipgloss.Color("#f2e05c") // project command that replaces a global script
 	colorSelBg    = lipgloss.Color("#232a3d") // selected-row background
 
 	titleFocusedStyle   = lipgloss.NewStyle().Foreground(colorAccent)

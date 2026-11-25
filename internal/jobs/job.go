@@ -82,7 +82,7 @@ func Start(id string, resolved config.ResolvedCommand, values map[string]string,
 		cmd:       execCmd,
 	}
 
-	logPath := filepath.Join(stateDir, "logs", id+".log")
+	logPath := filepath.Join(stateDir, "logs", logFileName(id))
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err == nil {
 		if f, err := os.Create(logPath); err == nil {
 			j.logFile = f
@@ -91,6 +91,34 @@ func Start(id string, resolved config.ResolvedCommand, values map[string]string,
 
 	go j.readLoop()
 	return j, nil
+}
+
+// logFileName turns a job id into a file name that stays inside the
+// logs folder. The id starts with the command's name, which can come
+// from an untrusted repo (a commands.yaml key, a package.json script)
+// and so may hold "/" or "..": "../../x" must not become a path. Every
+// character other than letters, digits, '.', '_' and '-' becomes '_',
+// and the result is capped so an over-long name can't exceed the
+// file system's limit.
+func logFileName(id string) string {
+	const maxLen = 120
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		case r == '.' && b.Len() > 0:
+			b.WriteRune(r) // never a leading dot: no hidden files, no ".."
+		default:
+			b.WriteByte('_')
+		}
+	}
+	name := b.String()
+	if len(name) > maxLen {
+		// Keep the end: it carries the "-<seq>" that keeps names apart.
+		name = name[len(name)-maxLen:]
+	}
+	return name + ".log"
 }
 
 // BuildCmd builds the *exec.Cmd for resolved with values injected as

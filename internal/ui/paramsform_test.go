@@ -66,3 +66,35 @@ func TestPreviewShowsScriptArgsQuoted(t *testing.T) {
 		t.Errorf("preview = %q, want %q", got, want)
 	}
 }
+
+// A secret is typed with masked echo; the preview under the field must
+// not print it back in plain text. The command still gets the real value.
+func TestPreviewMasksSecrets(t *testing.T) {
+	params := []config.Param{
+		{Name: "user", Type: config.ParamString, Default: "nuan"},
+		{Name: "token", Type: config.ParamSecret, Default: "hunter2"},
+	}
+	cases := []config.ResolvedCommand{
+		{Name: "run", Run: `curl -u "$LC_USER:${LC_TOKEN}" x`, Params: params},
+		{Name: "script", ScriptPath: "/s/login.sh", Params: params},
+	}
+	for _, cmd := range cases {
+		pf := newParamsForm(cmd, t.TempDir())
+		got := pf.preview()
+		if strings.Contains(got, "hunter2") {
+			t.Errorf("%s: preview shows the secret: %q", cmd.Name, got)
+		}
+		if !strings.Contains(got, secretMask) || !strings.Contains(got, "nuan") {
+			t.Errorf("%s: preview = %q, want the mask and the plain user", cmd.Name, got)
+		}
+		if v := pf.values()["token"]; v != "hunter2" {
+			t.Errorf("%s: command value = %q, want the real secret", cmd.Name, v)
+		}
+	}
+
+	// An empty secret shows as empty, so you can see it still needs filling in.
+	pf := newParamsForm(config.ResolvedCommand{Name: "e", ScriptPath: "/s/x.sh", Params: []config.Param{{Name: "token", Type: config.ParamSecret}}}, t.TempDir())
+	if got := pf.preview(); strings.Contains(got, secretMask) {
+		t.Errorf("empty secret should not show the mask: %q", got)
+	}
+}

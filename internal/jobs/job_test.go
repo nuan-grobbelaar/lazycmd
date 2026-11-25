@@ -258,3 +258,44 @@ func TestScriptArgsArriveAsSeparateArguments(t *testing.T) {
 		t.Errorf("got %q, want %q (empty --opt= dropped, value kept as one arg)", got, want)
 	}
 }
+
+func TestLogFileName(t *testing.T) {
+	cases := map[string]string{
+		"deploy-1":         "deploy-1.log",
+		"npm: test:unit-3": "npm__test_unit-3.log",
+		"../../etc/x-1":    "_._.._etc_x-1.log",
+		".hidden-2":        "_hidden-2.log",
+		"a/b\x00c-4":       "a_b_c-4.log",
+	}
+	for in, want := range cases {
+		if got := logFileName(in); got != want {
+			t.Errorf("logFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	long := strings.Repeat("x", 500) + "-9"
+	if got := logFileName(long); len(got) > 130 || !strings.HasSuffix(got, "-9.log") {
+		t.Errorf("long name = %q (len %d)", got, len(got))
+	}
+}
+
+// A command name from an untrusted repo must not steer where its log
+// is written.
+func TestStartKeepsLogInsideLogsDir(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, filepath.Join(root, "ok.sh"), "#!/bin/sh\necho hi\n")
+	stateDir := filepath.Join(t.TempDir(), "state")
+
+	j, err := Start("../../escaped-1", config.ResolvedCommand{Name: "../../escaped", ScriptPath: filepath.Join(root, "ok.sh")}, nil, stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, j, StatusSucceeded, 2*time.Second)
+
+	if _, err := os.Stat(filepath.Join(stateDir, "..", "escaped-1.log")); err == nil {
+		t.Fatal("log escaped the logs folder")
+	}
+	entries, _ := os.ReadDir(filepath.Join(stateDir, "logs"))
+	if len(entries) != 1 || entries[0].IsDir() {
+		t.Fatalf("logs folder = %v, want exactly one file", entries)
+	}
+}

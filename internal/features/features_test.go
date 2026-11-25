@@ -409,3 +409,55 @@ func TestNpmWorkspacesObjectForm(t *testing.T) {
 		t.Errorf("preview = %q", got)
 	}
 }
+
+// A package.json script name is repo-controlled; it must reach the
+// package manager as one argument, never as shell code.
+func TestNpmScriptNameIsNotShellCode(t *testing.T) {
+	evil := `x; echo INJECTED; $(echo SUB) 'q' #`
+	root := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "pwned")
+	pkg := `{"scripts": {` +
+		`"` + strings.ReplaceAll(evil, `"`, `\"`) + `": "a",` +
+		`"touch ` + marker + `": "b",` +
+		`"--prefix=/tmp": "c",` +
+		`"build": "d"}}`
+	writeFile(t, filepath.Join(root, "package.json"), pkg)
+	cmds, err := Npm{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]config.ResolvedCommand{}
+	for _, c := range cmds {
+		byName[c.Name] = c
+	}
+	if _, ok := byName["npm: --prefix=/tmp"]; ok {
+		t.Error("a script name starting with - should be skipped")
+	}
+	if got := byName["npm: build"].Run; got != "npm run build" {
+		t.Errorf("plain name should stay readable: %q", got)
+	}
+	if got := runWithStub(t, "npm", byName["npm: "+evil].Run, nil); got != "run "+evil {
+		t.Errorf("npm argv = %q, want the name as one argument", got)
+	}
+	runWithStub(t, "npm", byName["npm: touch "+marker].Run, nil)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("script name was executed by the shell")
+	}
+}
+
+func TestNpmWorkspaceScriptNameIsNotShellCode(t *testing.T) {
+	evil := `t;echo INJECTED`
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"],"scripts":{"`+evil+`":"x"}}`)
+	writeFile(t, filepath.Join(root, "packages/web/package.json"), `{"name":"web"}`)
+	cmds, _ := Npm{}.Commands(root, nil)
+	if len(cmds) != 1 {
+		t.Fatalf("cmds = %+v", cmds)
+	}
+	if got := runWithStub(t, "npm", cmds[0].Run, map[string]string{"LC_WORKSPACE": "."}); got != "run "+evil {
+		t.Errorf("root argv = %q", got)
+	}
+	if got := runWithStub(t, "npm", cmds[0].Run, map[string]string{"LC_WORKSPACE": "web"}); got != "run "+evil+" --workspace web" {
+		t.Errorf("workspace argv = %q", got)
+	}
+}

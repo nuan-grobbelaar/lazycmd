@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/huh"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safetext"
 )
 
 const optionsCmdTimeout = 5 * time.Second
@@ -75,20 +76,20 @@ func (pf *paramsForm) buildField(p config.Param) huh.Field {
 		v := new(bool)
 		*v, _ = strconv.ParseBool(p.Default)
 		pf.boolVals[p.Name] = v
-		return huh.NewConfirm().Key(p.Name).Title(p.Name).Value(v)
+		return huh.NewConfirm().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 
 	case config.ParamSelect:
 		v := new(string)
 		*v = p.Default
 		pf.strVals[p.Name] = v
-		field := huh.NewSelect[string]().Key(p.Name).Title(p.Name).Value(v)
+		field := huh.NewSelect[string]().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 		pf.attachSelectOptions(field, p)
 		return field
 
 	case config.ParamMulti:
 		v := new([]string)
 		pf.multiVals[p.Name] = v
-		field := huh.NewMultiSelect[string]().Key(p.Name).Title(p.Name).Value(v)
+		field := huh.NewMultiSelect[string]().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 		pf.attachMultiOptions(field, p)
 		return field
 
@@ -96,19 +97,19 @@ func (pf *paramsForm) buildField(p config.Param) huh.Field {
 		v := new(string)
 		*v = p.Default
 		pf.strVals[p.Name] = v
-		return huh.NewInput().Key(p.Name).Title(p.Name).EchoMode(huh.EchoModePassword).Value(v)
+		return huh.NewInput().Key(p.Name).Title(safetext.Line(p.Name)).EchoMode(huh.EchoModePassword).Value(v)
 
 	case config.ParamText:
 		v := new(string)
 		*v = p.Default
 		pf.strVals[p.Name] = v
-		return huh.NewText().Key(p.Name).Title(p.Name).Value(v)
+		return huh.NewText().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 
 	default: // config.ParamString
 		v := new(string)
 		*v = p.Default
 		pf.strVals[p.Name] = v
-		field := huh.NewInput().Key(p.Name).Title(p.Name).Value(v)
+		field := huh.NewInput().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
 		return field.Validate(stringValidator(p))
 	}
 }
@@ -116,14 +117,16 @@ func (pf *paramsForm) buildField(p config.Param) huh.Field {
 func stringValidator(p config.Param) func(string) error {
 	var pattern *regexp.Regexp
 	if p.Pattern != "" {
-		pattern = regexp.MustCompile(p.Pattern)
+		// Patterns are checked when the command loads; a bad one that
+		// slips through is ignored here rather than crashing the UI.
+		pattern, _ = regexp.Compile(p.Pattern)
 	}
 	return func(s string) error {
 		if p.Required && s == "" {
-			return fmt.Errorf("%s is required", p.Name)
+			return fmt.Errorf("%s is required", safetext.Line(p.Name))
 		}
 		if pattern != nil && s != "" && !pattern.MatchString(s) {
-			return fmt.Errorf("%s must match %s", p.Name, p.Pattern)
+			return fmt.Errorf("%s must match %s", safetext.Line(p.Name), safetext.Line(p.Pattern))
 		}
 		return nil
 	}
@@ -165,7 +168,9 @@ func (pf *paramsForm) attachMultiOptions(field *huh.MultiSelect[string], p confi
 func toOptions(values []string) []huh.Option[string] {
 	opts := make([]huh.Option[string], len(values))
 	for i, v := range values {
-		opts[i] = huh.NewOption(v, v)
+		// The label is drawn, so it is cleaned; the value is what the
+		// command receives, so it stays exactly as given.
+		opts[i] = huh.NewOption(safetext.Line(v), v)
 	}
 	return opts
 }
@@ -269,7 +274,7 @@ func (pf *paramsForm) values() map[string]string {
 // height it's given, so anything after the form gets clipped; keeping
 // this above the form and single-line keeps its height predictable.
 func (pf *paramsForm) preview() string {
-	values := pf.values()
+	values := pf.displayValues()
 	if pf.cmd.Preview != nil {
 		return "$ " + pf.cmd.Preview(values)
 	}
@@ -295,6 +300,24 @@ func (pf *paramsForm) preview() string {
 		parts[i] = envVar(p.Name, values[p.Name])
 	}
 	return "$ " + pf.cmd.ScriptPath + "  " + strings.Join(parts, " ")
+}
+
+// secretMask stands in for a secret's value wherever the form shows it.
+const secretMask = "••••••"
+
+// displayValues is values with every non-empty secret replaced by
+// secretMask, for the preview: the value is typed with masked echo, so
+// printing it in plain text right below the field would undo that for
+// anyone looking at the screen (or a screen share). The real values
+// still go to the command.
+func (pf *paramsForm) displayValues() map[string]string {
+	values := pf.values()
+	for _, p := range pf.cmd.Params {
+		if p.Type == config.ParamSecret && values[p.Name] != "" {
+			values[p.Name] = secretMask
+		}
+	}
+	return values
 }
 
 // shellQuote quotes a for display in the preview line only (jobs never

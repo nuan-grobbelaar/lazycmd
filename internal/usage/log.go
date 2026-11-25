@@ -71,6 +71,13 @@ func (l *Log) Record(repoRoot, id string, now time.Time) {
 	l.Repos[repoRoot][id] = entry{Count: decayedScore(e, now) + 1, LastUsed: now}
 }
 
+// Has reports whether id has ever been run in repoRoot (and the entry
+// not since deleted), however long ago.
+func (l *Log) Has(repoRoot, id string) bool {
+	_, ok := l.Repos[repoRoot][id]
+	return ok
+}
+
 // Score is id's current decayed usage count for repoRoot, 0 if it's
 // never been run there.
 func (l *Log) Score(repoRoot, id string, now time.Time) float64 {
