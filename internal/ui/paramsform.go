@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/safetext"
@@ -41,6 +43,9 @@ type paramsForm struct {
 	cmd        config.ResolvedCommand
 	projectDir string
 	form       *huh.Form
+	fields     []huh.Field // in order, for ← / → paging
+	group      *huh.Group  // the form's only group, drawn by view
+	scroll     int         // first content line shown by view
 
 	strVals   map[string]*string
 	boolVals  map[string]*bool
@@ -67,10 +72,138 @@ func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
 		fields = append(fields, pf.buildField(p))
 	}
 
-	pf.form = huh.NewForm(huh.NewGroup(fields...)).
+	pf.fields = fields
+	pf.group = huh.NewGroup(fields...)
+	pf.form = huh.NewForm(pf.group).
 		WithShowHelp(true).
+		WithTheme(formTheme()).
 		WithKeyMap(escCancelKeyMap())
 	return pf
+}
+
+// view draws the form's fields and help in width x height. huh pads
+// field lines one column wider than the form and relies on its viewport
+// to cut that off, so view cuts every line to width too; otherwise the
+// panel would cut them and mark each with "…". huh's own
+// view scrolls so the focused field is always the top line, which hides
+// the first field as soon as you move to the second. This scrolls only
+// as far as it must to keep the focused field in view.
+func (pf *paramsForm) view(width, height int) string {
+	lines := strings.Split(pf.group.Content(), "\n")
+	footer := strings.TrimSuffix(pf.group.Footer(), " ")
+	avail := height
+	if footer != "" {
+		avail -= lipgloss.Height(footer)
+	}
+	avail = max(1, avail)
+
+	if len(lines) > avail {
+		top, h := pf.focusSpan()
+		switch {
+		case h >= avail || top < pf.scroll:
+			pf.scroll = top
+		case top+h > pf.scroll+avail:
+			pf.scroll = top + h - avail
+		}
+		pf.scroll = max(0, min(pf.scroll, len(lines)-avail))
+		lines = lines[pf.scroll : pf.scroll+avail]
+	} else {
+		pf.scroll = 0
+		for len(lines) < avail { // keep the preview at the bottom
+			lines = append(lines, "")
+		}
+	}
+	for i, l := range lines {
+		lines[i] = ansi.Truncate(l, width, "")
+	}
+	out := strings.Join(lines, "\n")
+	if footer != "" {
+		out += "\n\n" + footer
+	}
+	return out
+}
+
+// focusSpan is the focused field's first line and height in the group's
+// content, measured the way huh lays the fields out.
+func (pf *paramsForm) focusSpan() (top, height int) {
+	focused := pf.form.GetFocusedField()
+	sep := formTheme().FieldSeparator.Render()
+	var b strings.Builder
+	for _, f := range pf.fields {
+		v := f.View()
+		b.WriteString(v)
+		if f == focused {
+			h := lipgloss.Height(v)
+			return lipgloss.Height(b.String()) - h, h
+		}
+		b.WriteString(sep)
+	}
+	return 0, 0
+}
+
+// formTheme is huh's Charm theme with the unfocused fields toned down:
+// only the focused field shows the > selector and a coloured prompt and
+// title, so it's clear which one the keys go to.
+func formTheme() *huh.Theme {
+	t := huh.ThemeCharm()
+	t.Blurred.Title = t.Blurred.Title.Foreground(colorTextDim).Bold(false)
+	t.Blurred.SelectSelector = lipgloss.NewStyle().SetString("  ")
+	t.Blurred.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
+	t.Blurred.TextInput.Prompt = t.Blurred.TextInput.Prompt.Foreground(colorTextDim)
+	return t
+}
+
+// arrowNav makes ← and → move to the previous and next field. It reports
+// false, leaving the key to huh, where the arrows mean something else: a
+// text field with text in it (they move the cursor) and a select that is
+// being filtered (they move in the filter). It never leaves the form:
+// → on the last field and ← on the first do nothing, so an arrow can't
+// submit it.
+func (pf *paramsForm) arrowNav(k tea.KeyMsg) (tea.Cmd, bool) {
+	if k.Type != tea.KeyLeft && k.Type != tea.KeyRight || k.Alt {
+		return nil, false
+	}
+	focused := pf.form.GetFocusedField()
+	switch f := focused.(type) {
+	case *huh.Input:
+		if s, _ := f.GetValue().(string); s != "" {
+			return nil, false
+		}
+	case *huh.Text:
+		if s, _ := f.GetValue().(string); s != "" {
+			return nil, false
+		}
+	}
+	if filtering(focused) {
+		return nil, false
+	}
+	i := -1
+	for j, f := range pf.fields {
+		if f == focused {
+			i = j
+		}
+	}
+	switch {
+	case i < 0:
+		return nil, false
+	case k.Type == tea.KeyRight && i < len(pf.fields)-1:
+		return pf.form.NextField(), true
+	case k.Type == tea.KeyLeft && i > 0:
+		return pf.form.PrevField(), true
+	}
+	return nil, true
+}
+
+// filtering reports whether a select or multi select is taking typed
+// filter text. huh doesn't expose it, but enables its "set filter" key
+// only then.
+func filtering(f huh.Field) bool {
+	for _, b := range f.KeyBinds() {
+		if b.Enabled() && b.Help().Desc == "set filter" {
+			return true
+		}
+	}
+	return false
 }
 
 // escCancelKeyMap adds esc to the form's quit binding. By default only
@@ -79,6 +212,9 @@ func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
 func escCancelKeyMap() *huh.KeyMap {
 	km := huh.NewDefaultKeyMap()
 	km.Quit = key.NewBinding(key.WithKeys("ctrl+c", "esc"))
+	// ← / → move between fields in the params form (arrowNav), so a bool
+	// toggles with space, h/l or y/n.
+	km.Confirm.Toggle = key.NewBinding(key.WithKeys(" ", "h", "l", "left", "right"), key.WithHelp("space", "toggle"))
 	return km
 }
 
@@ -130,9 +266,36 @@ func (pf *paramsForm) buildField(p config.Param) huh.Field {
 		v := new(string)
 		*v = p.Default
 		pf.strVals[p.Name] = v
-		field := huh.NewInput().Key(p.Name).Title(safetext.Line(p.Name)).Value(v)
+		field := huh.NewInput().Key(p.Name).Title(requiredTitle(p, v)).Value(v)
+		if p.Required {
+			// huh writes the text back on every keystroke, so the * goes
+			// as soon as something is typed. The bindings include a
+			// constant: huh only re-runs the func when their hash changes.
+			field.TitleFunc(func() string { return requiredTitle(p, v) }, []any{"title", v})
+		}
 		return field.Validate(stringValidator(p))
 	}
+}
+
+// requiredMark follows the title of a required field while it's empty.
+var requiredMark = lipgloss.NewStyle().Foreground(colorAmber).Bold(true).Render(" *")
+
+func requiredTitle(p config.Param, v *string) string {
+	if p.Required && *v == "" {
+		return safetext.Line(p.Name) + requiredMark
+	}
+	return safetext.Line(p.Name)
+}
+
+// requiredLeft counts the required fields that are still empty.
+func (pf *paramsForm) requiredLeft() int {
+	n := 0
+	for _, p := range pf.cmd.Params {
+		if v := pf.strVals[p.Name]; p.Required && v != nil && *v == "" {
+			n++
+		}
+	}
+	return n
 }
 
 func stringValidator(p config.Param) func(string) error {

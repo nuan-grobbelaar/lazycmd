@@ -60,9 +60,9 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 
 On macOS, option+1/2/3 types `¡ ™ £` unless your terminal treats Option as Meta; both work.
 
-In a params form: `tab`/`shift+tab` move between fields, `enter` confirms a field and submits on the last one, `esc` cancels.
+In a params form: `tab`/`shift+tab` or `←`/`→` move between fields (in a text field that has text, `←`/`→` move the cursor instead), `space` toggles a yes/no field, `enter` confirms a field and submits on the last one, `esc` cancels.
 
-**Run now:** `alt+enter` (or `ctrl+j`) runs the command straight away with the answers so far, without stepping through the remaining fields. It is refused, with the reason shown in the form, while a required field is empty or a value doesn't match its `pattern`; the `alt+enter run now` hint in the bottom bar appears only when the form is ready to run. Selects and bools use whatever they currently show (their default or first option).
+**Run now:** `alt+enter` (or `ctrl+j`) runs the command straight away with the answers so far, without stepping through the remaining fields. It is refused, with the reason shown in the form, while a required field is empty or a value doesn't match its `pattern`; the `alt+enter run now` hint in the bottom bar appears only when the form is ready to run, and while required fields are empty the bar says how many. Selects and bools use whatever they currently show (their default or first option).
 
 Terminals send `shift+enter` as a plain `enter`, which a terminal UI cannot tell apart, so it can't be used directly. If you want it anyway, make your terminal send a newline for it: in Ghostty `keybind = shift+enter=text:\n`, in iTerm2 a profile key mapping of Shift+Return to "Send Hex Code" `0x0A`. lazycmd then sees `ctrl+j`, which also runs the form.
 
@@ -155,7 +155,7 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `type` | `string` (default), `select`, `multi`, `bool`, `secret` or `text` |
 | `default` | initial value. Bools take `true`/`false`. For `multi`, a comma-separated list of options to preselect |
 | `pattern` | regexp a `string` value must match |
-| `required` | `string` only: the form refuses an empty value |
+| `required` | `string` only: the form refuses an empty value. The field's title shows an amber `*` while it's empty, and the bottom bar counts the required fields still empty |
 | `options` | static choices for `select` / `multi`. Each is a value, or a `label` / `value` pair |
 | `options_cmd` | shell command whose output lines become the choices (`value<TAB>label` for a label) |
 | `label` | `basename` or `relative`: derive labels from option values that are paths |
@@ -261,6 +261,7 @@ for t in $(printf 'api\nweb\nworker\n' | lazycmd pick "Targets?" --multi); do ec
 | `lazycmd pick PROMPT` | one of the lines on stdin. A line `VALUE<TAB>LABEL` shows the label and prints the value. `--multi` picks several, printed one per line |
 | exit code | `0` with the answer on stdout; `1` if cancelled (like fzf); `2` for a usage error |
 
+- **`pick`'s input:** the options must be piped in; run from a terminal with nothing piped, it exits `2`. Blank lines are skipped and spaces around each value and label are trimmed. No options at all exits `1`, as if cancelled, so `|| exit 1` covers an empty list too. Input over 1 MB is cut off.
 - **In the panel:** if the job is the one you're viewing, its question pops up straight away. Otherwise the job gets a `?` in the Jobs panel and waits, never taking focus away from what you're doing. View the job to answer. `esc` cancels (the script sees exit code 1). If the job is stopped while asking, the question goes away.
 - **Outside lazycmd**, including commands run with `t` or `terminal: true`, `ask` reads from the terminal (without echo for `--secret`), and `pick` uses [fzf](https://github.com/junegunn/fzf) if installed, otherwise a numbered list.
 - **How it works:** each panel job gets `LC_ASK_SOCK`, a socket in a private folder under the state dir (removed when lazycmd exits), and `LC_ASK_TOKEN`, a random token naming the job. Questions travel over that socket, not through the job's output, so nothing a program prints can open or imitate a popup. lazycmd's guess-the-prompt popup stays for programs that don't use `ask`.

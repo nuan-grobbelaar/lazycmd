@@ -1,6 +1,6 @@
 # Sidecar for deploy.sh: gives it a description, a form and arguments.
 confirm: "Deploy {services} to {env} ({region})?"
-desc: Pretend deploy (prints only). Shows select, multi, labelled options, bool, secret and args.
+desc: Pretend deploy (prints only). Shows select, multi, labelled options, a required field, bool, secret and args.
 params:
   - { name: env, type: select, options: [dev, staging, prod], default: dev }
   - { name: services, type: multi, options: [api, web, worker], default: "api,web" }
@@ -13,6 +13,7 @@ params:
         value: af-south-1
     default: eu-central-1
   - { name: tag, type: string, pattern: '^[A-Za-z0-9._-]*$' }
+  - { name: reason, type: string, required: true }   # marked * until filled in
   - { name: dry_run, type: bool, default: "true" }
   - { name: token, type: secret }
 

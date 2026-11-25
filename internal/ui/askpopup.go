@@ -133,7 +133,7 @@ func (m *Model) maybeOpenAsk() tea.Cmd {
 		field = huh.NewSelect[string]().Title(title).Options(askOptions(p.Req.Options)...).Value(a.value)
 	}
 	w, _ := m.formDims()
-	a.form = huh.NewForm(huh.NewGroup(field)).WithShowHelp(true).WithKeyMap(escCancelKeyMap()).
+	a.form = huh.NewForm(huh.NewGroup(field)).WithShowHelp(true).WithTheme(formTheme()).WithKeyMap(escCancelKeyMap()).
 		WithWidth(w - 2)
 	m.askPopup = a
 	return a.form.Init()

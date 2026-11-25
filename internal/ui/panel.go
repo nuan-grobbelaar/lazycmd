@@ -18,11 +18,23 @@ var (
 	colorRed      = lipgloss.Color("#ff8294")
 	colorBlue     = lipgloss.Color("#86b6ff")
 	colorYellow   = lipgloss.Color("#f2e05c") // project command that replaces a global script
-	colorSelBg    = lipgloss.Color("#232a3d") // selected-row background
+	colorSelBg    = lipgloss.Color("#3a4766") // selected row in the focused panel
+	colorSelBgDim = lipgloss.Color("#232a3d") // selected row in an unfocused panel, input boxes
 
 	titleFocusedStyle   = lipgloss.NewStyle().Foreground(colorAccent)
 	titleUnfocusedStyle = lipgloss.NewStyle().Foreground(colorTextDim)
 )
+
+// selectedRowStyle is the cursor row of a list. In the focused panel it
+// is bold accent text on a light band, so it stands out on any dark
+// terminal background; in an unfocused panel it stays a quiet band, which
+// also shows where the keys go.
+func selectedRowStyle(focused bool) lipgloss.Style {
+	if focused {
+		return lipgloss.NewStyle().Background(colorSelBg).Foreground(colorAccent).Bold(true)
+	}
+	return lipgloss.NewStyle().Background(colorSelBgDim).Foreground(lipgloss.Color("#ffffff"))
+}
 
 // renderPanel draws a box with the title cut into the top border, e.g.
 // "╭─ [1] Commands ───────╮", since lipgloss has no built-in support for

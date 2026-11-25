@@ -4,7 +4,7 @@ Each script shows one or more lazycmd features. They only print, wait or ask que
 
 | Script | Shows |
 |---|---|
-| [`deploy`](scripts/deploy.lazycmd.yaml) | every param type, options with labels (`region`: shows *Frankfurt*, sends `eu-central-1`), `args:`, a `secret` read from the environment, and a **`confirm:`** question after the form |
+| [`deploy`](scripts/deploy.lazycmd.yaml) | every param type, options with labels (`region`: shows *Frankfurt*, sends `eu-central-1`), a `required` field (`reason`, marked `*` until filled in), `args:`, a `secret` read from the environment, and a **`confirm:`** question after the form |
 | [`ask-demo`](scripts/ask-demo.sh) | **`lazycmd ask` / `lazycmd pick`**: a text answer with a default, a pick with labels, a multi pick and a secret, each as a popup mid-run |
 | [`pick-file`](scripts/pick-file.lazycmd.yaml) | **`terminal: true`** (marked `⧉`): `enter` hands fzf the real terminal |
 | [`panel-size`](scripts/panel-size.sh) | the Output panel's **pseudo-terminal size** and **`LC_PANEL=1`**. Resize the window while it runs |

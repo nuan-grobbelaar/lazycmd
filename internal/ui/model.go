@@ -483,6 +483,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		m.activeForm.notice = ""
+		if cmd, ok := m.activeForm.arrowNav(key); ok {
+			return m, cmd
+		}
 		if isRunNowKey(key) {
 			if problems := m.activeForm.problems(); len(problems) > 0 {
 				m.activeForm.notice = "can't run yet: " + strings.Join(problems, "; ")
@@ -504,6 +507,13 @@ func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, cmd
+}
+
+func requiredHint(n int) string {
+	if n == 1 {
+		return "1 required field empty"
+	}
+	return fmt.Sprintf("%d required fields empty", n)
 }
 
 // isRunNowKey is the "run with the answers so far" key. Terminals send
@@ -1417,7 +1427,7 @@ func (m Model) renderFormModal() string {
 	formH := max(3, height-2-headLines-boxLines-2-noticeLines)
 	m.activeForm.form = m.activeForm.form.WithWidth(inner).WithHeight(formH)
 
-	content := head + m.activeForm.form.View() + "\n" + notice + "\n" + previewBox
+	content := head + m.activeForm.view(inner, formH) + "\n" + notice + "\n" + previewBox
 	return renderPanel(m.activeForm.cmd.Name, content, width, height, true)
 }
 
@@ -1425,7 +1435,7 @@ func (m Model) renderPromptModal() string {
 	width, height := m.promptDims()
 	pending, _ := m.activeJob.job.Buffer.PendingLine()
 	dim := lipgloss.NewStyle().Foreground(colorTextDim)
-	inputBox := lipgloss.NewStyle().Background(colorSelBg).Padding(0, 1).Width(max(1, width-4))
+	inputBox := lipgloss.NewStyle().Background(colorSelBgDim).Padding(0, 1).Width(max(1, width-4))
 	content := lipgloss.NewStyle().Foreground(colorTextSoft).Render(pending) + "\n" +
 		inputBox.Render(m.promptInput.View()) + "\n" +
 		dim.Render("Detected: output paused without a newline")
@@ -1503,7 +1513,7 @@ func (m Model) renderList(width int) string {
 	plainStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
 	dimStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 	filterStyle := lipgloss.NewStyle().Foreground(colorAccent)
-	selStyle := lipgloss.NewStyle().Background(colorSelBg).Foreground(lipgloss.Color("#ffffff"))
+	selStyle := selectedRowStyle(m.focus == focusList)
 	yellowStyle := lipgloss.NewStyle().Foreground(colorYellow)
 
 	var b strings.Builder
@@ -1573,7 +1583,7 @@ func (m Model) renderJobsList(width int) string {
 	plainStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
 	dimStyle := lipgloss.NewStyle().Foreground(colorTextDim)
 	amberStyle := lipgloss.NewStyle().Foreground(colorAmber)
-	selStyle := lipgloss.NewStyle().Background(colorSelBg).Foreground(lipgloss.Color("#ffffff"))
+	selStyle := selectedRowStyle(true) // drawn only while Jobs has focus
 
 	var b strings.Builder
 	for i, tj := range m.jobs {
@@ -1638,9 +1648,11 @@ func keyBar(pairs ...string) string {
 func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
-		hints := []string{"tab", "next field", "enter", "next/run"}
+		hints := []string{"←/→ tab", "field", "enter", "next/run"}
 		if len(m.activeForm.problems()) == 0 {
 			hints = append(hints, "alt+enter", "run now")
+		} else if n := m.activeForm.requiredLeft(); n > 0 {
+			hints = append(hints, "*", requiredHint(n))
 		}
 		return keyBar(append(hints, "esc", "cancel")...)
 	case m.trustPromptOpen:
@@ -1727,7 +1739,8 @@ func (m Model) renderHelp() string {
 			row("?", "the job is waiting for an answer: view it to answer"),
 
 		title.Render("Params form / filter / prompts") + "\n" +
-			row("tab/shift+tab", "move between fields") + "\n" +
+			row("tab/shift+tab, ←/→", "move between fields (in a text field with text, ←/→ move the cursor)") + "\n" +
+			row("space", "toggle a yes/no field") + "\n" +
 			row("enter", "confirm a field, or submit the form on the last one") + "\n" +
 			row("alt+enter, ctrl+j", "run now, once every required field is set") + "\n" +
 			row("esc", "cancel"),

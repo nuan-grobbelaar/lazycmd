@@ -31,6 +31,7 @@ fi
 echo "env:      $env"
 echo "region:   ${LC_REGION:-<none>}"
 echo "tag:      $tag"
+echo "reason:   ${LC_REASON:-}"
 echo "dry run:  $dry_run"
 if [ -n "${LC_TOKEN:-}" ]; then
   echo "token:    set (${#LC_TOKEN} chars)"
