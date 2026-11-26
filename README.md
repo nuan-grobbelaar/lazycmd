@@ -1,6 +1,19 @@
 # lazycmd
 
+[![CI](https://github.com/nuan-grobbelaar/lazycmd/actions/workflows/ci.yml/badge.svg)](https://github.com/nuan-grobbelaar/lazycmd/actions/workflows/ci.yml)
+[![Security](https://github.com/nuan-grobbelaar/lazycmd/actions/workflows/security.yml/badge.svg)](https://github.com/nuan-grobbelaar/lazycmd/actions/workflows/security.yml)
+[![Release](https://img.shields.io/github/v/tag/nuan-grobbelaar/lazycmd?label=release&sort=semver)](https://github.com/nuan-grobbelaar/lazycmd/tags)
+[![Go version](https://img.shields.io/github/go-mod/go-version/nuan-grobbelaar/lazycmd)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Homebrew](https://img.shields.io/badge/homebrew-nuan--grobbelaar%2Ftap-FBB040?logo=homebrew&logoColor=white)](https://github.com/nuan-grobbelaar/homebrew-tap)
+
 A lazygit-style terminal UI for running your scripts and project commands. Pick a command, fill in its parameters in a form, and watch it run as a job. Alias: `lc`.
+
+```bash
+brew install nuan-grobbelaar/tap/lazycmd   # from the Homebrew tap
+```
+
+Or from source:
 
 ```bash
 make install     # installs lazycmd and the lc alias to GOBIN (or GOPATH/bin)
@@ -508,3 +521,7 @@ make test       # go test ./...
 ```
 
 Design notes and open questions are in [plan.md](plan.md).
+
+## License
+
+[MIT](LICENSE) © Nuan Grobbelaar
