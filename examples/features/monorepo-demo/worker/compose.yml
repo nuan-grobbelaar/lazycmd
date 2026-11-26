@@ -1,0 +1,5 @@
+services:
+  jobs:
+    image: alpine
+    command: ["sh", "-c", "while true; do echo working; sleep 5; done"]
+    profiles: [nightly]

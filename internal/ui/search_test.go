@@ -220,3 +220,26 @@ func TestSlashInOutputWithNoJobDoesNotFilter(t *testing.T) {
 		t.Error("/ in the Commands panel should filter")
 	}
 }
+
+func TestSpacesCanBeTypedInFilterAndSearch(t *testing.T) {
+	// A space arrives as KeySpace (with the space in Runes), not KeyRunes.
+	space := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+
+	m := ready(t, group(cmd("a", "git: pull", "1"), cmd("b", "git: push", "1"), cmd("c", "gitpull", "1")), t.TempDir(), t.TempDir())
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = typeText(t, m, "git:")
+	m, _ = sendKey(t, m, space)
+	m = typeText(t, m, "pu")
+	if m.filterQuery != "git: pu" || strings.Join(rowNames(m), ",") != "git: pull,git: push" {
+		t.Errorf("filter %q matches %v", m.filterQuery, rowNames(m))
+	}
+
+	m = searchModel(t)
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = typeText(t, m, "beta")
+	m, _ = sendKey(t, m, space)
+	m = typeText(t, m, "line")
+	if m.search.query != "beta line" || m.searchStatus() != "1/1" {
+		t.Errorf("search %q status %q: one space typed, not two", m.search.query, m.searchStatus())
+	}
+}

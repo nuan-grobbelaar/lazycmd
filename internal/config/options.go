@@ -125,14 +125,15 @@ func validLabelMode(m string) bool {
 
 // ParseOptionLines turns options_cmd output into options: one per
 // non-empty line, "value<TAB>label" when the line has a tab, else the
-// line is the value.
+// line is the value. A line that starts with a tab ("<TAB>label") is an
+// option with an empty value, for a pick that can mean "none" or "all".
 func ParseOptionLines(out string) OptionList {
 	var opts OptionList
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimRight(line, "\r")
 		value, label, _ := strings.Cut(line, "\t")
 		value, label = strings.TrimSpace(value), strings.TrimSpace(label)
-		if value == "" {
+		if value == "" && label == "" {
 			continue
 		}
 		opts = append(opts, Option{Label: label, Value: value})

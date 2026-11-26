@@ -90,36 +90,37 @@ func fileExists(path string) bool {
 }
 
 // WatchPaths lists the files the features read for repoRoot, so a change
-// to one can rebuild the command list: the fixed names (pom.xml,
-// package.json, lockfiles, compose files, pyproject.toml, vite configs),
-// every pom found below the root, and the package.json of each npm
-// workspace. Missing names are listed too: a file appearing is a change.
-// The search for poms walks folders, so callers should not ask for this
-// on every tick.
+// to one can rebuild the command list. In the root and in every folder
+// below it that holds a project file (pom.xml, package.json,
+// pyproject.toml, a compose file, a vite config), it lists all the names
+// a feature looks for there, missing ones too: a file appearing is a
+// change. It also lists the package.json of each npm workspace. The
+// search walks folders, so callers should not ask for this on every tick.
 func WatchPaths(repoRoot string) []string {
-	names := []string{
-		"pom.xml", "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb",
-		"pyproject.toml", "uv.lock", "poetry.lock", "pdm.lock",
-	}
-	names = append(names, composeFiles...)
-	for _, ext := range []string{"js", "ts", "mjs", "cjs", "mts", "cts"} {
-		names = append(names, "vite.config."+ext)
-	}
-	paths := make([]string, 0, len(names)+8)
-	for _, n := range names {
-		paths = append(paths, filepath.Join(repoRoot, n))
-	}
-	walkPoms(repoRoot, func(rel string) bool {
-		if rel != "." {
-			paths = append(paths, filepath.Join(repoRoot, filepath.FromSlash(rel), "pom.xml"))
-		}
-		return true
+	markers := []string{"pom.xml", "package.json", "pyproject.toml"}
+	markers = append(markers, composeFiles...)
+	markers = append(markers, viteConfigs...)
+	names := append([]string{"pnpm-lock.yaml", "yarn.lock", "bun.lockb", "uv.lock", "poetry.lock", "pdm.lock"}, markers...)
+
+	dirs := map[string]bool{".": true}
+	walkFor(repoRoot, func(n string) bool { return contains(markers, n) }, func(rel, _ string) bool {
+		dirs[rel] = true
+		return len(dirs) < maxScanned
 	})
-	if data, err := os.ReadFile(filepath.Join(repoRoot, "package.json")); err == nil {
-		var pkg packageJSON
-		if json.Unmarshal(data, &pkg) == nil {
-			for _, ws := range findWorkspaces(repoRoot, pkg.workspacePatterns()) {
-				paths = append(paths, filepath.Join(repoRoot, ws.dir, "package.json"))
+	var paths []string
+	for dir := range dirs {
+		for _, n := range names {
+			paths = append(paths, filepath.Join(repoRoot, filepath.FromSlash(dir), n))
+		}
+	}
+	for dir := range dirs {
+		abs := filepath.Join(repoRoot, filepath.FromSlash(dir))
+		if data, err := os.ReadFile(filepath.Join(abs, "package.json")); err == nil {
+			var pkg packageJSON
+			if json.Unmarshal(data, &pkg) == nil {
+				for _, ws := range findWorkspaces(abs, pkg.workspacePatterns()) {
+					paths = append(paths, filepath.Join(abs, ws.dir, "package.json"))
+				}
 			}
 		}
 	}

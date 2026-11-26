@@ -25,12 +25,24 @@ func (Compose) Name() string { return "compose" }
 var composeFiles = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
 
 func (Compose) Detect(repoRoot string) (bool, string) {
-	for _, name := range composeFiles {
-		if fileExists(filepath.Join(repoRoot, name)) {
-			return true, name
-		}
+	if name := composeFileIn(repoRoot); name != "" {
+		return true, name
+	}
+	if len(projectDirs(repoRoot, composeFiles...)) > 0 {
+		return true, "compose files"
 	}
 	return false, ""
+}
+
+// composeFileIn is the compose file in dir, by Docker's order of
+// preference, or "".
+func composeFileIn(dir string) string {
+	for _, name := range composeFiles {
+		if fileExists(filepath.Join(dir, name)) {
+			return name
+		}
+	}
+	return ""
 }
 
 // composeCLIs are the programs compose.command may select. The setting
@@ -59,9 +71,33 @@ func (Compose) Commands(repoRoot string, settings map[string]string) ([]config.R
 	if !contains(composeCLIs, cli) {
 		return nil, fmt.Errorf("compose.command must be one of %s, not %q", strings.Join(composeCLIs, ", "), cli)
 	}
+	label, err := labelSetting(settings)
+	if err != nil {
+		return nil, fmt.Errorf("compose.%v", err)
+	}
 
-	_, file := Compose{}.Detect(repoRoot)
-	data, err := os.ReadFile(filepath.Join(repoRoot, file))
+	// One compose file at the root: the plain form. Several, or none at
+	// the root: each command asks which file (project) to use.
+	dirs := projectDirs(repoRoot, composeFiles...)
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	if len(dirs) == 1 && dirs[0] == "." {
+		return composeIn(repoRoot, cli)
+	}
+	var projects []projectCommands
+	for _, d := range dirs {
+		if cmds, err := composeIn(filepath.Join(repoRoot, filepath.FromSlash(d)), cli); err == nil && len(cmds) > 0 {
+			projects = append(projects, projectCommands{d, cmds})
+		}
+	}
+	return mergeProjects(projects, label), nil
+}
+
+// composeIn builds the commands for the compose file in dir.
+func composeIn(dir, cli string) ([]config.ResolvedCommand, error) {
+	file := composeFileIn(dir)
+	data, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		return nil, err
 	}

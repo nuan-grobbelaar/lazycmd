@@ -244,11 +244,8 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := []rune(m.search.query); len(r) > 0 {
 			m.search.query = string(r[:len(r)-1])
 		}
-	case tea.KeyRunes, tea.KeySpace:
+	case tea.KeyRunes, tea.KeySpace: // a space arrives as KeySpace, with the space in Runes
 		m.search.query += string(msg.Runes)
-		if msg.Type == tea.KeySpace {
-			m.search.query += " "
-		}
 	default:
 		return m, nil
 	}

@@ -715,7 +715,7 @@ func (m Model) updateFiltering(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filterQuery = m.filterQuery[:len(m.filterQuery)-1]
 			m.applyFilter()
 		}
-	case tea.KeyRunes:
+	case tea.KeyRunes, tea.KeySpace: // a space arrives as KeySpace, with the space in Runes
 		m.filterQuery += string(msg.Runes)
 		m.applyFilter()
 	}

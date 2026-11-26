@@ -185,7 +185,9 @@ func TestViteDetectVariousExtensions(t *testing.T) {
 		}
 	}
 
-	got := names(t, Vite{}, t.TempDir(), nil)
+	withConfig := t.TempDir()
+	writeFile(t, filepath.Join(withConfig, "vite.config.ts"), "")
+	got := names(t, Vite{}, withConfig, nil)
 	for _, want := range []string{"vite: dev", "vite: preview", "vite: build"} {
 		if !contains(got, want) {
 			t.Errorf("missing %q in %v", want, got)
@@ -240,7 +242,7 @@ func TestPackageManagerPicksByLockfile(t *testing.T) {
 		if c.lockfile != "package-lock.json" {
 			writeFile(t, filepath.Join(root, c.lockfile), "")
 		}
-		if got := packageManager(root); got != c.want {
+		if got := packageManagerAt(root, root); got != c.want {
 			t.Errorf("lockfile %s: packageManager = %q, want %q", c.lockfile, got, c.want)
 		}
 	}
@@ -1075,6 +1077,27 @@ func TestFeatureExamplesLoad(t *testing.T) {
 	}
 	if got := strings.Join(targetOptions(by["maven: spotless:check"]), ","); got != "services/orders::" {
 		t.Errorf("maven demo spotless targets = %q", got)
+	}
+
+	mono := filepath.Join(dir, "monorepo-demo")
+	for feature, c := range map[string]struct {
+		f    Feature
+		cmd  string
+		want string
+	}{
+		"npm":     {Npm{}, "npm: build", "web"},
+		"vite":    {Vite{}, "vite: dev", "web"},
+		"python":  {Python{}, "python: pytest", "api"},
+		"compose": {Compose{}, "compose: up", "api,worker"},
+	} {
+		cmds, err := c.f.Commands(mono, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", feature, err)
+		}
+		p, _ := param(mavenNames(cmds)[c.cmd], "project")
+		if values(p.Options) != c.want {
+			t.Errorf("monorepo demo %s: projects %q, want %q", c.cmd, values(p.Options), c.want)
+		}
 	}
 
 	cmds, err = Python{}.Commands(filepath.Join(dir, "python-demo"), nil)

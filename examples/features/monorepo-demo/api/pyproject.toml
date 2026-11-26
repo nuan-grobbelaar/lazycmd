@@ -1,0 +1,11 @@
+# One of several projects in this folder: the python commands ask which.
+[project]
+name = "api"
+version = "0.1.0"
+dependencies = ["fastapi", "pytest"]
+
+[project.scripts]
+serve = "api.main:run"
+
+[tool.ruff]
+line-length = 100

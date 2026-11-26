@@ -12,6 +12,7 @@ Each script shows one or more lazycmd features. They only print, wait or ask que
 | [`hello`](scripts/hello.sh) + [`global/hello.sh`](global/hello.sh) | a **project command shadowing a global script** of the same name: shown in yellow, and asked about before its first run in a repo. Needs the global half linked (below) |
 | [`features/compose-demo`](features/compose-demo/compose.yaml) | the **`compose`** feature: `cd` into it and run `lc` to see `up`, `down`, `logs`, `exec` and the rest with its services (and the `jobs` profile) as choices |
 | [`features/maven-monorepo`](features/maven-monorepo/services) | the **`maven`** feature with no root pom: a `target` pick over `billing` (modules `api` and `web`) and `orders`; `spring-boot:run` offers only `billing › api`, `spotless:check` only `orders` |
+| [`features/monorepo-demo`](features/monorepo-demo) | **several projects in one repo**: `web` (npm + vite), `api` (python + compose) and `worker` (compose). `npm`, `vite`, `python` and `compose` commands each ask which project, and a compose project's services are listed for the one picked |
 | [`features/python-demo`](features/python-demo/pyproject.toml) | the **`python`** feature: a command for each script and task, and `pytest`, `ruff` and `mypy` since they're configured |
 | [`projects/my-app.yaml`](projects/my-app.yaml) | a profile that changes `deploy`'s choices and defaults for one repo, and teaches the maven feature a wrapper plugin with **`maven.goals`** (so `spring-boot:run` shows up in a repo whose pom lists `acme-boot-maven-plugin`) |
 

@@ -43,18 +43,32 @@
       "type": "object",
       "additionalProperties": { "type": "string" },
       "properties": {
-        "command": { "enum": ["docker compose", "docker-compose", "podman compose"], "description": "The compose CLI to run. Default: docker compose." }
+        "command": { "enum": ["docker compose", "docker-compose", "podman compose"], "description": "The compose CLI to run. Default: docker compose." },
+        "label": { "enum": ["folder", "path"], "description": "How several projects are named in the project pick: by folder name (default; a shared name is shown as the path) or by path." }
       }
     },
     "python": {
       "type": "object",
       "additionalProperties": { "type": "string" },
       "properties": {
-        "runner": { "enum": ["uv", "poetry", "pdm", "plain"], "description": "How to run scripts and tools. Default: from the lockfile (uv.lock, poetry.lock, pdm.lock), otherwise plain (python -m ...)." }
+        "runner": { "enum": ["uv", "poetry", "pdm", "plain"], "description": "How to run scripts and tools. Default: from the lockfile (uv.lock, poetry.lock, pdm.lock), otherwise plain (python -m ...)." },
+        "label": { "enum": ["folder", "path"], "description": "How several projects are named in the project pick: by folder name (default; a shared name is shown as the path) or by path." }
       }
     },
-    "npm": { "type": "object", "additionalProperties": { "type": "string" } },
-    "vite": { "type": "object", "additionalProperties": { "type": "string" } },
+    "npm": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "label": { "enum": ["folder", "path"], "description": "How several projects are named in the project pick: by folder name (default; a shared name is shown as the path) or by path." }
+      }
+    },
+    "vite": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "label": { "enum": ["folder", "path"], "description": "How several projects are named in the project pick: by folder name (default; a shared name is shown as the path) or by path." }
+      }
+    },
     "git": { "type": "object", "additionalProperties": { "type": "string" } }
   }
 }

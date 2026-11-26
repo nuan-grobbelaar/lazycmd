@@ -2,7 +2,9 @@ package features
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,10 +17,13 @@ type Npm struct{}
 func (Npm) Name() string { return "npm" }
 
 func (Npm) Detect(repoRoot string) (bool, string) {
-	if !fileExists(filepath.Join(repoRoot, "package.json")) {
-		return false, ""
+	if fileExists(filepath.Join(repoRoot, "package.json")) {
+		return true, "package.json"
 	}
-	return true, "package.json"
+	if len(projectDirs(repoRoot, "package.json")) > 0 {
+		return true, "package.json files"
+	}
+	return false, ""
 }
 
 type packageJSON struct {
@@ -84,6 +89,60 @@ func findWorkspaces(repoRoot string, patterns []string) []workspace {
 }
 
 func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
+	label, err := labelSetting(settings)
+	if err != nil {
+		return nil, fmt.Errorf("npm.%v", err)
+	}
+	dirs := npmProjects(repoRoot)
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	// One package at the root: the plain form. Several, or none at the
+	// root: each command asks which package (project) to run in.
+	if len(dirs) == 1 && dirs[0] == "." {
+		return npmIn(repoRoot, repoRoot)
+	}
+	var projects []projectCommands
+	for _, d := range dirs {
+		if cmds, err := npmIn(filepath.Join(repoRoot, filepath.FromSlash(d)), repoRoot); err == nil && len(cmds) > 0 {
+			projects = append(projects, projectCommands{d, cmds})
+		}
+	}
+	return mergeProjects(projects, label), nil
+}
+
+// npmProjects lists the folders with a package.json that are projects of
+// their own: a package that another one lists in its workspaces is run
+// from there, through the workspace picker, not as a project.
+func npmProjects(repoRoot string) []string {
+	dirs := projectDirs(repoRoot, "package.json")
+	member := map[string]bool{}
+	for _, d := range dirs {
+		abs := filepath.Join(repoRoot, filepath.FromSlash(d))
+		data, err := os.ReadFile(filepath.Join(abs, "package.json"))
+		if err != nil {
+			continue
+		}
+		var pkg packageJSON
+		if json.Unmarshal(data, &pkg) != nil {
+			continue
+		}
+		for _, ws := range findWorkspaces(abs, pkg.workspacePatterns()) {
+			member[path.Join(d, filepath.ToSlash(ws.dir))] = true
+		}
+	}
+	var out []string
+	for _, d := range dirs {
+		if !member[d] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// npmIn builds the commands for the package in repoRoot. top is the
+// repo's root, where the search for a lockfile ends.
+func npmIn(repoRoot, top string) ([]config.ResolvedCommand, error) {
 	data, err := os.ReadFile(filepath.Join(repoRoot, "package.json"))
 	if err != nil {
 		return nil, err
@@ -93,7 +152,7 @@ func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 		return nil, err
 	}
 
-	pm := packageManager(repoRoot)
+	pm := packageManagerAt(repoRoot, top)
 	workspaces := findWorkspaces(repoRoot, pkg.workspacePatterns())
 
 	// With workspaces, every script found in the root or any workspace
@@ -134,6 +193,9 @@ func (Npm) Commands(repoRoot string, settings map[string]string) ([]config.Resol
 			// a key like "test; curl x | sh" must stay one argument to
 			// the package manager, not become shell code.
 			Run: pm + " run " + shellQuote(name),
+			Preview: func(map[string]string) string {
+				return strings.Join(npmArgs(pm, name, ""), " ")
+			},
 		}
 		if len(workspaces) > 0 {
 			cmd.Params = params
@@ -195,15 +257,29 @@ func shellQuote(s string) string {
 
 // packageManager picks the manager by which lockfile is present, never
 // by running anything.
-func packageManager(repoRoot string) string {
+func packageManager(dir string) string {
 	switch {
-	case fileExists(filepath.Join(repoRoot, "pnpm-lock.yaml")):
+	case fileExists(filepath.Join(dir, "pnpm-lock.yaml")):
 		return "pnpm"
-	case fileExists(filepath.Join(repoRoot, "yarn.lock")):
+	case fileExists(filepath.Join(dir, "yarn.lock")):
 		return "yarn"
-	case fileExists(filepath.Join(repoRoot, "bun.lockb")):
+	case fileExists(filepath.Join(dir, "bun.lockb")):
 		return "bun"
 	default:
-		return "npm"
+		return ""
+	}
+}
+
+// packageManagerAt looks for a lockfile in dir and then in each folder
+// above it up to top (a workspace's lockfile sits at the root of the
+// monorepo), and falls back to npm.
+func packageManagerAt(dir, top string) string {
+	for d := dir; ; d = filepath.Dir(d) {
+		if pm := packageManager(d); pm != "" {
+			return pm
+		}
+		if d == top || d == filepath.Dir(d) {
+			return "npm"
+		}
 	}
 }

@@ -341,7 +341,7 @@ maven:
   default_profile: local
 ```
 
-Settings in use: `maven.default_profile` preselects the profile param on Maven commands, and `maven.goals` [adds goals or changes how they're detected](#maven-goals-teaching-lazycmd-your-plugins). `compose.command` picks the compose CLI (`docker compose`, the default, `docker-compose` or `podman compose`), and `python.runner` how Python scripts and tools run (`uv`, `poetry`, `pdm` or `plain`; by default from the lockfile). The `npm`, `vite` and `git` blocks are accepted but currently have no settings.
+Settings in use: `maven.default_profile` preselects the profile param on Maven commands, and `maven.goals` [adds goals or changes how they're detected](#maven-goals-teaching-lazycmd-your-plugins). `compose.command` picks the compose CLI (`docker compose`, the default, `docker-compose` or `podman compose`), and `python.runner` how Python scripts and tools run (`uv`, `poetry`, `pdm` or `plain`; by default from the lockfile). `npm.label`, `vite.label`, `compose.label` and `python.label` (`folder`, the default, or `path`) choose how [several projects](#several-projects-in-one-repo) are named in the project pick. The `git` block is accepted but has no settings.
 
 ## Features
 
@@ -350,10 +350,10 @@ Features only **read files** (never run `mvn`, `npm`, `git` to find out what exi
 | Feature | Detected by | Commands |
 |---|---|---|
 | `maven` | `pom.xml` at the root, or in folders below it ([several projects](#maven-in-a-monorepo)) | the lifecycle phases (`validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`); `spotless:check`, `checkstyle:check`, `spotbugs:check`, `pmd:check` when the root pom declares those plugins; and `spring-boot:run`, `quarkus:dev`, `jetty:run` when the root pom **or any module pom** declares that plugin |
-| `npm` | `package.json` | one command per script. The runner comes from the lockfile: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, otherwise npm |
-| `vite` | `vite.config.*` | `dev`, `preview`, `build` |
-| `compose` | `compose.yaml`, `compose.yml`, `docker-compose.yaml` or `docker-compose.yml` | `up`, `down`, `ps`, `logs`, `build`, `restart`, `pull` and `exec`, with the compose file's services as choices |
-| `python` | `pyproject.toml` | one command per script (`[project.scripts]`, `[tool.poetry.scripts]`) and task (`[tool.pdm.scripts]`, `[tool.poe.tasks]`); `pytest` when it's configured or a dependency; `ruff check` and `ruff format` when `[tool.ruff]` exists; `mypy` when `[tool.mypy]` exists |
+| `npm` | `package.json` at the root, or in folders below it ([several projects](#several-projects-in-one-repo)) | one command per script. The runner comes from the lockfile: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, otherwise npm |
+| `vite` | `vite.config.*` at the root, or in folders below it ([several projects](#several-projects-in-one-repo)) | `dev`, `preview`, `build` |
+| `compose` | `compose.yaml`, `compose.yml`, `docker-compose.yaml` or `docker-compose.yml`, at the root or in folders below it ([several projects](#several-projects-in-one-repo)) | `up`, `down`, `ps`, `logs`, `build`, `restart`, `pull` and `exec`, with the compose file's services as choices |
+| `python` | `pyproject.toml` at the root, or in folders below it ([several projects](#several-projects-in-one-repo)) | one command per script (`[project.scripts]`, `[tool.poetry.scripts]`) and task (`[tool.pdm.scripts]`, `[tool.poe.tasks]`); `pytest` when it's configured or a dependency; `ruff check` and `ruff format` when `[tool.ruff]` exists; `mypy` when `[tool.mypy]` exists |
 | `git` | `.git` | `fetch --prune`, `pull`, `push`, `stash`, `stash pop`, `worktree list` |
 
 Params added from your files:
@@ -364,6 +364,23 @@ Params added from your files:
 
 - **Docker Compose:** services (and their `profiles:`) are read from the compose file. `up` has `services` (empty means all), `detach` (default on), `build` and, if any service has profiles, a `profile`. `down` has `volumes`. `logs` has a `service` (`(all services)` by default) and `follow`. `build` has `services` and `no_cache`; `restart` and `pull` have `services`. `exec` has a required `service` and a `command` (default `sh`, run as `sh -c` in the container, so quotes and pipes work); it is interactive, so it takes the real terminal (`⧉`, see [`terminal: true`](#command-spec)). Arguments are passed one by one, so a value can't become shell code. A service or profile name that isn't plain (letters, digits, `. _ -`) is skipped.
 - **Python:** the runner comes from the lockfile (`uv.lock` → `uv run`, `poetry.lock` → `poetry run`, `pdm.lock` → `pdm run`), or from `python.runner`; with none, programs run in whatever environment is active (tools as `python -m <tool>`). Tasks defined in `[tool.pdm.scripts]` always run through `pdm run`, since only pdm knows them, and poethepoet tasks through the runner's `poe`. `pytest` has a `path` and a `filter` (`-k`). Names from the file are quoted, and one starting with `-` is skipped.
+
+### Several projects in one repo
+
+`npm`, `vite`, `python` and `compose` (and `maven`, [below](#maven-in-a-monorepo)) also look in folders below the root, up to 4 levels down, for `package.json`, a vite config, `pyproject.toml` or a compose file. Hidden folders, `node_modules`, `target`, `build`, `dist`, `out`, `vendor`, `venv`, `env` and `src` are skipped, and symlinked folders aren't followed. So a monorepo works with or without a project at the root.
+
+- **One project at the root** (the usual case): nothing changes.
+- **Several projects, or none at the root:** every command of that feature gets a required **`project`** pick, listing the projects that have that command (`npm: dev` lists only the packages with a `dev` script). The command runs in the project's folder, with that project's own package manager, runner or compose file.
+- **Naming:** a project is shown by its folder's name (`(root)` for the root). When two projects share a name, those two are shown by their path from the repo root (`a/app`, `b/app`). With `label: path` in the feature's settings, every project is shown by its path:
+
+  ```yaml
+  compose:
+    label: path     # or folder (the default)
+  ```
+- **Params that depend on the project** follow the pick: a compose file's services and profiles, an npm package's workspaces. They're filled in once the project is chosen, so choose the project first.
+- **Lockfiles:** an npm package or Python project with no lockfile of its own uses the nearest one above it, up to the repo root, so a pnpm or uv monorepo with one lockfile at the root runs everything the same way.
+- **npm workspaces** stay as before: a package that another one lists under `workspaces` isn't a project of its own, it's chosen with the `workspace` pick of the package that lists it.
+- **Reload:** new project files are noticed within about ten seconds.
 
 ### Maven in a monorepo
 

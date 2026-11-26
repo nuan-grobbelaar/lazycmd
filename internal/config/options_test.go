@@ -89,7 +89,8 @@ func TestSidecarWithLabelsLoads(t *testing.T) {
 
 func TestParseOptionLines(t *testing.T) {
 	got := ParseOptionLines("/a/one\tOne\n\n  /a/two  \n/a/three\t\r\n\tlabel only\n")
-	want := OptionList{{Value: "/a/one", Label: "One"}, {Value: "/a/two"}, {Value: "/a/three"}}
+	// A line that starts with a tab is an option with an empty value.
+	want := OptionList{{Value: "/a/one", Label: "One"}, {Value: "/a/two"}, {Value: "/a/three"}, {Value: "", Label: "label only"}}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

@@ -20,10 +20,13 @@ type Python struct{}
 func (Python) Name() string { return "python" }
 
 func (Python) Detect(repoRoot string) (bool, string) {
-	if !fileExists(filepath.Join(repoRoot, "pyproject.toml")) {
-		return false, ""
+	if fileExists(filepath.Join(repoRoot, "pyproject.toml")) {
+		return true, "pyproject.toml"
 	}
-	return true, "pyproject.toml"
+	if len(projectDirs(repoRoot, "pyproject.toml")) > 0 {
+		return true, "pyproject.toml files"
+	}
+	return false, ""
 }
 
 // pythonRunners maps python.runner to the words put in front of a
@@ -37,29 +40,61 @@ var pythonRunners = map[string]string{
 	"plain":  "",
 }
 
-// pythonRunner picks the runner by which lockfile is present, never by
-// running anything.
-func pythonRunner(repoRoot string) string {
-	switch {
-	case fileExists(filepath.Join(repoRoot, "uv.lock")):
-		return "uv"
-	case fileExists(filepath.Join(repoRoot, "poetry.lock")):
-		return "poetry"
-	case fileExists(filepath.Join(repoRoot, "pdm.lock")):
-		return "pdm"
+// pythonRunner picks the runner by which lockfile is present in dir or
+// above it up to top (a uv workspace has one uv.lock at its root), never
+// by running anything.
+func pythonRunner(dir, top string) string {
+	for d := dir; ; d = filepath.Dir(d) {
+		switch {
+		case fileExists(filepath.Join(d, "uv.lock")):
+			return "uv"
+		case fileExists(filepath.Join(d, "poetry.lock")):
+			return "poetry"
+		case fileExists(filepath.Join(d, "pdm.lock")):
+			return "pdm"
+		}
+		if d == top || d == filepath.Dir(d) {
+			return "plain"
+		}
 	}
-	return "plain"
 }
 
 func (Python) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
+	label, err := labelSetting(settings)
+	if err != nil {
+		return nil, fmt.Errorf("python.%v", err)
+	}
+	if r := settings["runner"]; r != "" {
+		if _, ok := pythonRunners[r]; !ok {
+			return nil, fmt.Errorf("python.runner must be one of uv, poetry, pdm, plain, not %q", r)
+		}
+	}
+	dirs := projectDirs(repoRoot, "pyproject.toml")
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	// One project at the root: the plain form. Several, or none at the
+	// root: each command asks which project to run in.
+	if len(dirs) == 1 && dirs[0] == "." {
+		return pythonIn(repoRoot, repoRoot, settings)
+	}
+	var projects []projectCommands
+	for _, d := range dirs {
+		if cmds, err := pythonIn(filepath.Join(repoRoot, filepath.FromSlash(d)), repoRoot, settings); err == nil && len(cmds) > 0 {
+			projects = append(projects, projectCommands{d, cmds})
+		}
+	}
+	return mergeProjects(projects, label), nil
+}
+
+// pythonIn builds the commands for the project in repoRoot; top is the
+// repo's root, where the search for a lockfile ends.
+func pythonIn(repoRoot, top string, settings map[string]string) ([]config.ResolvedCommand, error) {
 	runner := settings["runner"]
 	if runner == "" {
-		runner = pythonRunner(repoRoot)
+		runner = pythonRunner(repoRoot, top)
 	}
-	prefix, ok := pythonRunners[runner]
-	if !ok {
-		return nil, fmt.Errorf("python.runner must be one of uv, poetry, pdm, plain, not %q", runner)
-	}
+	prefix := pythonRunners[runner]
 
 	data, err := os.ReadFile(filepath.Join(repoRoot, "pyproject.toml"))
 	if err != nil {

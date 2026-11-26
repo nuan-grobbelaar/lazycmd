@@ -1,8 +1,6 @@
 package features
 
 import (
-	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -16,18 +14,6 @@ import (
 // Commands then pick a target ("project::module") and run mvn -f on that
 // project. A repo with just a root project keeps the simpler single
 // project form (module / also_make params) in maven.go.
-
-const (
-	maxProjectDepth = 4   // folders below the repo root that are searched
-	maxScanned      = 500 // poms read while searching
-	maxScanDirs     = 20000
-)
-
-// skipDirs are never searched: build output, dependencies, environments.
-var skipDirs = map[string]bool{
-	"node_modules": true, "target": true, "src": true, "build": true, "dist": true, "out": true,
-	"vendor": true, "venv": true, "env": true, "__pycache__": true,
-}
 
 type mavenProject struct {
 	dir     string // relative to the repo root; "." for the root
@@ -49,40 +35,11 @@ func hasNestedPom(repoRoot string) bool {
 }
 
 // walkPoms calls visit with the folder (relative, slash-separated) of
-// each pom.xml found up to maxProjectDepth folders down, in sorted order,
-// until visit returns false. Hidden folders and skipDirs are skipped, and
-// symlinks are not followed, so nothing outside the repo is read.
+// each pom.xml found, in sorted order, until visit returns false. See
+// walkFor for what is searched.
 func walkPoms(repoRoot string, visit func(rel string) bool) {
-	visited := 0
-	stop := false
-	_ = filepath.WalkDir(repoRoot, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || stop {
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		rel, _ := filepath.Rel(repoRoot, p)
-		rel = filepath.ToSlash(rel)
-		if d.IsDir() {
-			if visited++; visited > maxScanDirs {
-				stop = true
-				return fs.SkipAll
-			}
-			if rel != "." {
-				if skipDirs[d.Name()] || strings.HasPrefix(d.Name(), ".") || strings.Count(rel, "/") >= maxProjectDepth {
-					return fs.SkipDir
-				}
-			}
-			if _, err := os.Lstat(filepath.Join(p, "pom.xml")); err == nil {
-				if !visit(rel) {
-					stop = true
-					return fs.SkipAll
-				}
-			}
-		}
-		return nil
-	})
+	walkFor(repoRoot, func(name string) bool { return name == "pom.xml" },
+		func(rel, _ string) bool { return visit(rel) })
 }
 
 // findProjects returns the Maven projects of the repo: every pom found
