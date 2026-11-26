@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -95,7 +96,7 @@ func newParamsForm(cmd config.ResolvedCommand, projectDir string) *paramsForm {
 // as far as it must to keep the focused field in view.
 func (pf *paramsForm) view(width, height int) string {
 	lines := strings.Split(pf.group.Content(), "\n")
-	footer := strings.TrimSuffix(pf.group.Footer(), " ")
+	footer := strings.TrimSuffix(pf.hintLine(width), " ")
 	avail := height
 	if footer != "" {
 		avail -= lipgloss.Height(footer)
@@ -126,6 +127,90 @@ func (pf *paramsForm) view(width, height int) string {
 		out += "\n\n" + footer
 	}
 	return out
+}
+
+func hint(k, desc string) key.Binding {
+	return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc))
+}
+
+// hintLine is the one line of hints at the bottom of the form: what the
+// focused field takes (huh's own list for it), the form's own keys, and
+// whether the command can run yet. Everything about using the form is
+// here, none of it in the bar at the bottom of the screen. When a field
+// fails its check, huh's error message takes the line instead.
+func (pf *paramsForm) hintLine(width int) string {
+	if len(pf.group.Errors()) > 0 {
+		return pf.group.Footer()
+	}
+	focused := pf.form.GetFocusedField()
+	text := pf.onTextField()
+
+	// What the focused field takes, then the form's own keys.
+	var field, form []key.Binding
+	switch {
+	case text && pf.editing:
+		field = append(field, hint("esc", "stop editing"), hint("enter", "next field"))
+	case text:
+		field = append(field, hint("space", "edit"), hint("←/→", "fields"), hint("enter", "next"))
+	default:
+		field = joinArrows(enabled(focused.KeyBinds()))
+		if !filtering(focused) {
+			field = append(field, hint("←/→", "fields"))
+		}
+	}
+	if !filtering(focused) {
+		if len(pf.problems()) == 0 {
+			form = append(form, hint("alt+enter", "run now"))
+		} else if n := pf.requiredLeft(); n > 0 {
+			form = append(form, hint("*", requiredHint(n)))
+		}
+		if !(text && pf.editing) { // there, esc stops editing instead
+			form = append(form, hint("esc", "cancel"))
+		}
+	}
+
+	h := help.New()
+	h.Styles = formTheme().Help
+	h.Width = 0 // cut below: the help view only stops at a width when its "…" fits
+	cut := func(bs []key.Binding) string { return ansi.Truncate(h.ShortHelpView(bs), width, "…") }
+
+	// One line when everything fits, else the field's keys and the
+	// form's keys on a line each, so the ones that matter most aren't cut.
+	if all := h.ShortHelpView(append(append([]key.Binding(nil), field...), form...)); ansi.StringWidth(all) <= width || len(form) == 0 {
+		return cut(append(field, form...))
+	}
+	return cut(field) + "\n" + cut(form)
+}
+
+func enabled(bs []key.Binding) []key.Binding {
+	var out []key.Binding
+	for _, b := range bs {
+		if b.Enabled() {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// joinArrows shows huh's separate ↑ and ↓ as one "↑/↓".
+func joinArrows(bs []key.Binding) []key.Binding {
+	var out []key.Binding
+	for i := 0; i < len(bs); i++ {
+		if bs[i].Help().Key == "↑" && i+1 < len(bs) && bs[i+1].Help().Key == "↓" {
+			out = append(out, hint("↑/↓", "choose"))
+			i++
+			continue
+		}
+		out = append(out, bs[i])
+	}
+	return out
+}
+
+func requiredHint(n int) string {
+	if n == 1 {
+		return "1 required field empty"
+	}
+	return fmt.Sprintf("%d required fields empty", n)
 }
 
 // focusSpan is the focused field's first line and height in the group's

@@ -5,10 +5,12 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 
 	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
+	"lazycmd/internal/jobs"
 	"lazycmd/internal/ui"
 	"lazycmd/internal/watch"
 )
@@ -35,6 +37,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "lazycmd:", err)
 		os.Exit(1)
 	}
+
+	// Panel jobs can't ask the terminal about its colours, so lazycmd
+	// answers for it (see package jobs).
+	jobs.SetDarkBackground(lipgloss.HasDarkBackground())
 
 	a := newApp(globalDir, stateDir, cwd)
 	loaded := a.load()

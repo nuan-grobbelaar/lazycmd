@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
@@ -384,7 +385,7 @@ func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
 	if m.activeForm == nil {
 		t.Fatal("form did not open")
 	}
-	if strings.Contains(m.keyBarText(), "run now") {
+	if strings.Contains(m.activeForm.hintLine(120), "run now") {
 		t.Error("run-now hint shown while a required field is empty")
 	}
 
@@ -403,8 +404,8 @@ func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
 	// Fill only the first field, never tabbing through the rest.
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("sam")})
-	if !strings.Contains(m.keyBarText(), "alt+enter") || !strings.Contains(m.keyBarText(), "run now") {
-		t.Errorf("hint should read alt+enter run now once required fields are set; got %q", m.keyBarText())
+	if hints := ansi.Strip(m.activeForm.hintLine(120)); !strings.Contains(hints, "alt+enter run now") {
+		t.Errorf("hint should read alt+enter run now once required fields are set; got %q", hints)
 	}
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
 	if m.activeForm != nil || m.activeJob == nil {

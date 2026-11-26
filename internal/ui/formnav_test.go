@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/ansi"
 
+	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
 )
 
@@ -177,13 +178,16 @@ func TestEditModeThroughTheModel(t *testing.T) {
 	if m.activeForm == nil {
 		t.Fatal("the form should be open")
 	}
-	if bar := ansi.Strip(m.keyBarText()); !strings.Contains(bar, "space edit") || strings.Contains(bar, "stop editing") {
-		t.Errorf("key bar = %q", bar)
+	if m.keyBarText() != "" {
+		t.Errorf("the bottom bar should say nothing while a form is open: %q", m.keyBarText())
+	}
+	if hints := ansi.Strip(m.activeForm.hintLine(100)); !strings.Contains(hints, "space edit") || strings.Contains(hints, "stop editing") {
+		t.Errorf("form hints = %q", hints)
 	}
 
 	m, _ = sendKey(t, m, keySpace)
-	if bar := ansi.Strip(m.keyBarText()); !strings.Contains(bar, "esc stop editing") {
-		t.Errorf("key bar while editing = %q", bar)
+	if hints := ansi.Strip(m.activeForm.hintLine(100)); !strings.Contains(hints, "esc stop editing") || strings.Contains(hints, "esc cancel") {
+		t.Errorf("form hints while editing = %q", hints)
 	}
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.activeForm == nil {
@@ -292,4 +296,74 @@ func drain(c tea.Cmd) []tea.Msg {
 		return nil
 	}
 	return []tea.Msg{msg}
+}
+
+func TestFormHintLineFollowsTheFocusedField(t *testing.T) {
+	pf := newParamsForm(config.ResolvedCommand{Name: "h", Params: []config.Param{
+		{Name: "env", Type: config.ParamSelect, Options: config.Opts("dev", "prod")},
+		{Name: "services", Type: config.ParamMulti, Options: config.Opts("api", "web")},
+		{Name: "tag", Type: config.ParamString, Required: true},
+		{Name: "dry", Type: config.ParamBool},
+	}}, t.TempDir())
+	pf.form.Init()
+	hints := func() string { return ansi.Strip(pf.hintLine(200)) }
+	next := func() { press(pf, keyRight) }
+
+	// A select: its own keys, the form's, and how to leave.
+	for _, want := range []string{"filter", "←/→ fields", "* 1 required field empty", "esc cancel"} {
+		if !strings.Contains(hints(), want) {
+			t.Errorf("select: %q missing from %q", want, hints())
+		}
+	}
+	next()
+	if !strings.Contains(hints(), "toggle") || !strings.Contains(hints(), "←/→ fields") {
+		t.Errorf("multi: %q", hints())
+	}
+	next() // the required text field
+	if h := hints(); !strings.Contains(h, "space edit") || !strings.Contains(h, "* 1 required field empty") {
+		t.Errorf("text: %q", h)
+	}
+	press(pf, keySpace)
+	if h := hints(); !strings.Contains(h, "esc stop editing") || strings.Contains(h, "esc cancel") || !strings.Contains(h, "* 1 required") {
+		t.Errorf("editing: %q (esc stops editing; the required count still shows)", h)
+	}
+	typeInto(pf, "v1")
+	press(pf, tea.KeyMsg{Type: tea.KeyEsc})
+	next()
+	if h := hints(); !strings.Contains(h, "space toggle") || !strings.Contains(h, "alt+enter run now") || strings.Contains(h, "required") {
+		t.Errorf("bool, ready to run: %q", h)
+	}
+
+	// Never wider than the form. When one line won't hold it all, the
+	// field's keys and the form's keys get a line each, so "esc cancel"
+	// is never the part that's cut.
+	for _, w := range []int{20, 40, 60} {
+		for _, l := range strings.Split(pf.hintLine(w), "\n") {
+			if ansi.StringWidth(l) > w {
+				t.Errorf("width %d: a line is %d wide: %q", w, ansi.StringWidth(l), ansi.Strip(l))
+			}
+		}
+	}
+	two := strings.Split(ansi.Strip(pf.hintLine(30)), "\n")
+	if len(two) != 2 || !strings.HasSuffix(two[0], "…") || !strings.Contains(two[1], "esc cancel") {
+		t.Errorf("a narrow form should put the form's keys on their own line: %q", two)
+	}
+	if one := pf.hintLine(200); strings.Contains(one, "\n") {
+		t.Errorf("everything fits at width 200, so one line: %q", one)
+	}
+}
+
+func TestAskPopupCarriesItsOwnHints(t *testing.T) {
+	m, srv := askModel(t, config.ResolvedCommand{ID: "global:q", Name: "q", Run: "sleep 10"})
+	m = startNamed(t, m, "q")
+	defer m.jobs[0].job.Kill()
+	sendAsk(srv, m.jobs[0].askToken, ask.Request{Kind: ask.KindPick, Prompt: "Which one?", Options: []ask.Option{{Value: "a"}, {Value: "b"}}})
+	m = pollUntil(t, m, func(m Model) bool { return m.askPopup != nil })
+
+	if m.keyBarText() != "" {
+		t.Errorf("the bottom bar should say nothing while a popup is open: %q", m.keyBarText())
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "esc cancel (the script sees exit 1)") {
+		t.Errorf("the cancel hint should be in the popup:\n%s", view)
+	}
 }

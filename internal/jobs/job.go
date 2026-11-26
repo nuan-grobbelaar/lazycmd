@@ -165,6 +165,7 @@ func paramEnv(values map[string]string) []string {
 
 func (j *Job) readLoop() {
 	buf := make([]byte, 4096)
+	var queries queryScanner
 	for {
 		// Unsynchronized against Write/EchoEnabled is fine here: Read and
 		// Write pull in independent directions on the same fd, and this
@@ -173,6 +174,9 @@ func (j *Job) readLoop() {
 		n, err := j.ptmx.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
+			if reply := queries.scan(chunk); len(reply) > 0 {
+				j.Write(reply) // see queries.go
+			}
 			j.Buffer.Write(chunk)
 			if j.logFile != nil {
 				j.logFile.Write(chunk)

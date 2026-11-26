@@ -547,13 +547,6 @@ func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func requiredHint(n int) string {
-	if n == 1 {
-		return "1 required field empty"
-	}
-	return fmt.Sprintf("%d required fields empty", n)
-}
-
 // isRunNowKey is the "run with the answers so far" key. Terminals send
 // shift+enter as a plain enter, which Bubble Tea v1 can't tell apart from
 // enter, so it works only where the terminal is set to send something
@@ -1725,29 +1718,11 @@ func keyBar(pairs ...string) string {
 func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
-		hints := []string{"←/→ tab", "field", "enter", "next/run"}
-		switch {
-		case m.activeForm.onTextField() && m.activeForm.editing:
-			hints = []string{"esc", "stop editing", "enter", "next/run"}
-		case m.activeForm.onTextField():
-			hints = []string{"←/→ tab", "field", "space", "edit", "enter", "next/run"}
-		}
-		if len(m.activeForm.problems()) == 0 {
-			hints = append(hints, "alt+enter", "run now")
-		} else if n := m.activeForm.requiredLeft(); n > 0 {
-			hints = append(hints, "*", requiredHint(n))
-		}
-		if !(m.activeForm.onTextField() && m.activeForm.editing) {
-			hints = append(hints, "esc", "cancel")
-		}
-		return keyBar(hints...)
+		return "" // the form carries its own hints
 	case m.trustPromptOpen:
 		return keyBar("y", "allow this repo's commands", "n/esc", "not now")
 	case m.askPopup != nil:
-		if m.askPopup.p.Req.Kind == ask.KindPick {
-			return keyBar("enter", "answer", "/", "filter", "esc", "cancel (the script sees exit 1)")
-		}
-		return keyBar("enter", "answer", "esc", "cancel (the script sees exit 1)")
+		return "" // the popup carries its own hints
 	case m.confirm != nil:
 		return keyBar("y", "run it", "n/esc", "back")
 	case m.shadowConfirm != nil:

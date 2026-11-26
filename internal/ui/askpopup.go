@@ -3,9 +3,12 @@ package ui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"lazycmd/internal/ask"
 	"lazycmd/internal/jobs"
@@ -150,8 +153,8 @@ func (m Model) askDims() (width, height, formHeight int) {
 		rows = 1 + len(m.askPopup.p.Req.Options)
 	}
 	formHeight = rows + 2            // + blank line and help line
-	height = min(maxH, formHeight+5) // + borders, "asked by" line and gap
-	formHeight = max(3, height-5)
+	height = min(maxH, formHeight+6) // + borders, "asked by" line, gap and the cancel hint
+	formHeight = max(3, height-6)
 	return width, height, formHeight
 }
 
@@ -207,6 +210,10 @@ func (m Model) renderAskPopup() string {
 	a.form = a.form.WithWidth(inner).WithHeight(formHeight)
 	dim := lipgloss.NewStyle().Foreground(colorTextDim)
 	head := dim.Render("asked by the running job") + "\n\n"
-	content := head + a.form.View()
+	h := help.New()
+	h.Styles = formTheme().Help
+	h.Width = inner
+	cancel := ansi.Truncate(h.ShortHelpView([]key.Binding{hint("esc", "cancel (the script sees exit 1)")}), inner, "…")
+	content := head + a.form.View() + "\n" + cancel
 	return renderPanel(a.job.cmd.Name+" asks", strings.TrimRight(content, "\n"), width, height, true)
 }
