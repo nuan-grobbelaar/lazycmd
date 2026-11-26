@@ -1250,3 +1250,26 @@ func TestMavenNestedProjectSearchLimits(t *testing.T) {
 		t.Error("an empty repo has no maven project")
 	}
 }
+
+func TestWatchPathsCoverTheFilesFeaturesRead(t *testing.T) {
+	root := t.TempDir()
+	writePom(t, root, ".", `<modules><module>core</module></modules>`)
+	writePom(t, root, "core", ``)
+	writePom(t, root, "tools/gen", ``)
+	writeFile(t, filepath.Join(root, "package.json"), `{"workspaces": ["apps/*"]}`)
+	writeFile(t, filepath.Join(root, "apps", "web", "package.json"), `{"name": "web"}`)
+
+	got := map[string]bool{}
+	for _, p := range WatchPaths(root) {
+		rel, _ := filepath.Rel(root, p)
+		got[filepath.ToSlash(rel)] = true
+	}
+	for _, want := range []string{
+		"pom.xml", "core/pom.xml", "tools/gen/pom.xml", "package.json", "apps/web/package.json",
+		"compose.yaml", "docker-compose.yml", "pyproject.toml", "uv.lock", "pnpm-lock.yaml", "vite.config.ts",
+	} {
+		if !got[want] {
+			t.Errorf("%s isn't watched; have %v", want, got)
+		}
+	}
+}

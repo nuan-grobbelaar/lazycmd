@@ -42,6 +42,8 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 | `x` | Jobs | stop the job |
 | `r` | Jobs | restart it with the same params |
 | `?` before a job | Jobs | it's waiting for an answer (`lazycmd ask` / `pick`, or a prompt): view it to answer |
+| `/` | Output | search the output (`enter` keeps the search, `esc` clears it) |
+| `n` / `N` | Output | next / previous match of the search |
 | `i` | Output | focus mode: keys go straight to the running job; `esc` leaves |
 | `↑`/`↓`, `pgup`/`pgdn` | Output | scroll (scrolling up stops following; reaching the bottom resumes) |
 | `tab` | anywhere | next panel |
@@ -57,6 +59,21 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 - The key bar shows the last command, e.g. `. deploy (12m ago)`.
 
 **The output panel is not a real terminal.** Panel jobs run on a pseudo-terminal sized to the Output panel, resized along with the window, so tools that format to the width behave. They also get `LC_PANEL=1`, so a script can tell it's in the panel and use a simpler mode. Interactive full-screen programs (fzf, vim, `docker compose exec`) need `t` or `terminal: true`.
+
+**Searching the output.** `/` in the Output panel opens a search line at the bottom of the panel; the matches are highlighted as you type, the current one in amber, and the panel title shows where you are (`Output · deploy · 3/17`, or `no matches`).
+
+- It searches what the job printed with the colour codes left out, so a word in colour is found like any other. Highlighting keeps the original colours.
+- It ignores case unless your query has a capital letter ("smart case"): `error` finds `Error` and `ERROR`, `Error` finds only `Error`.
+- `enter` keeps the search; `n` and `N` step to the next and previous match, wrapping round. `esc` clears it. While you type, `q` and the other keys are text, not commands.
+- Searching stops the output following, the same as scrolling up; new output is still searched, and the count grows. Scroll back to the bottom to follow again.
+- It works on running and finished jobs, and a search stays set when you switch to another job.
+
+**Config reloads by itself.** lazycmd checks the files it read once a second, and when they change (once the change has settled, so a save or a `git pull` isn't caught halfway) it rebuilds the command list the way startup does:
+
+- **Watched:** the global and the repo's `config.yaml`, `scripts/` and `commands.yaml`, your profiles, the scripts any listed command runs (even from outside the repo), and the files features read: `pom.xml` and the poms below it, `package.json` and its workspaces, lockfiles, compose files, `pyproject.toml`, `vite.config.*`. New poms are found within about ten seconds.
+- **Kept:** the selection (by command) and the filter. Running jobs and open forms are left alone; a form that's open keeps the command as it was when it opened.
+- **Said once:** the key bar and the Output panel's start text say what changed (`Reloaded: 1 added (deploy), 1 changed (build)`) and list any new warnings. A reload that changes no command, like editing a script's body, says nothing.
+- **Trust:** if the repo's own commands changed (a script edited after a `git pull`, say), they're [held back again](#allowing-a-repos-commands) and the yellow "review" row comes back. The prompt only opens on its own at startup, and one you're already reading stays open and updates.
 
 On macOS, option+1/2/3 types `¡ ™ £` unless your terminal treats Option as Meta; both work.
 

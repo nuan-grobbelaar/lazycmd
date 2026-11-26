@@ -55,7 +55,14 @@ type Model struct {
 	filtering   bool
 	filterQuery string
 
-	warnings    []string
+	warnings []string
+	// extraWarnings are warnings that don't come from reading the config
+	// (a socket that couldn't be set up, a trust answer that couldn't be
+	// saved), so a reload keeps them.
+	extraWarnings []string
+	// reloader, when set, rebuilds the command list when files change.
+	reloader    Reloader
+	reloadNote  string // what the last reload changed, for the start text
 	stateDir    string
 	projectRoot string
 	profileName string // matched central project profile, shown in the header
@@ -68,6 +75,7 @@ type Model struct {
 
 	viewport    viewport.Model
 	followTail  bool
+	search      searchState // the Output panel's search
 	activeJob   *trackedJob
 	activeHdr   string // "$ name\n", prefixed to the job's buffer content
 	jobs        []*trackedJob
@@ -164,8 +172,15 @@ type PendingTrust struct {
 // prompt, which opens straight away. The list shows one placeholder row
 // in their place, so declining for now still leaves a way back.
 func (m Model) WithPendingTrust(p PendingTrust) Model {
-	m.pendingTrust = &p
+	m = m.holdBack(p)
 	m.trustPromptOpen = true
+	return m
+}
+
+// holdBack hides the repo's commands behind the trust prompt without
+// opening it.
+func (m Model) holdBack(p PendingTrust) Model {
+	m.pendingTrust = &p
 
 	review := config.Group{Title: "This project", Commands: []config.ResolvedCommand{{
 		ID:   trustReviewID,
@@ -207,10 +222,12 @@ func (m Model) updateTrustPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		store := trust.Load(m.stateDir)
 		store.Allow(m.projectRoot, p.Fingerprint)
 		if err := store.Save(m.stateDir); err != nil {
-			m.warnings = append(m.warnings, "could not remember this repo as allowed: "+err.Error())
+			w := "could not remember this repo as allowed: " + err.Error()
+			m.warnings = append(m.warnings, w)
+			m.extraWarnings = append(m.extraWarnings, w)
 		}
 		m.setGroups(p.FullGroups)
-		m.viewport.SetContent(m.activeJobBody())
+		m.syncOutput()
 	case "ctrl+c":
 		return m, tea.Quit
 	case "n", "N", "esc", "q", "enter":
@@ -388,6 +405,9 @@ func (m *Model) applyFilter() {
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.reloader != nil {
+		return reloadTick()
+	}
 	return nil
 }
 
@@ -408,6 +428,16 @@ func (m *Model) ensurePolling() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// The reload timer runs whatever is open (a form, a popup).
+	switch msg := msg.(type) {
+	case reloadTickMsg:
+		return m, m.pollReload()
+	case reloadedMsg:
+		if msg.loaded != nil {
+			m = m.applyLoaded(msg.loaded)
+		}
+		return m, reloadTick()
+	}
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = wsMsg.Width, wsMsg.Height
 		m.layout()
@@ -452,6 +482,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.inputFocus {
 			return m.updateInputFocus(msg)
+		}
+		if m.search.editing {
+			return m.updateSearch(msg)
 		}
 		if m.filtering {
 			return m.updateFiltering(msg)
@@ -637,7 +670,7 @@ func (m Model) updatePoll(msg pollMsg) (tea.Model, tea.Cmd) {
 		_, version := m.activeJob.job.Buffer.Snapshot()
 		if version != m.lastVersion {
 			m.lastVersion = version
-			m.viewport.SetContent(m.activeJobBody())
+			m.syncOutput()
 			if m.followTail {
 				m.viewport.GotoBottom()
 			}
@@ -728,6 +761,11 @@ func (m Model) updatePromptPopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.flash = ""
+	if m.focus == focusOutput {
+		if next, ok := m.updateOutputSearchKey(msg); ok {
+			return next, nil
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
@@ -1127,7 +1165,7 @@ func (m *Model) switchToJob(tj *trackedJob) {
 	_, version := tj.job.Buffer.Snapshot()
 	m.lastVersion = version
 	m.followTail = true
-	m.viewport.SetContent(m.activeJobBody())
+	m.syncOutput()
 	m.viewport.GotoBottom()
 }
 
@@ -1214,7 +1252,7 @@ func (m *Model) layout() {
 	_, outputWidth, _, bodyHeight := m.dims()
 	followed := m.followTail
 	m.viewport = viewport.New(outputWidth-2, max(1, bodyHeight-2-outputFooterHeight))
-	m.viewport.SetContent(m.activeJobBody())
+	m.syncOutput()
 	// Running jobs get the new size too, and SIGWINCH with it.
 	for _, tj := range m.jobs {
 		tj.job.Resize(m.viewport.Width, m.viewport.Height)
@@ -1229,10 +1267,14 @@ func (m *Model) layout() {
 const welcomeText = "Select a command on the left and press enter.\n\nOutput streams here."
 
 func (m Model) initialOutputText() string {
-	if len(m.warnings) == 0 {
-		return welcomeText
+	text := welcomeText
+	if len(m.warnings) > 0 {
+		text = "Config warnings:\n\n" + strings.Join(m.warnings, "\n")
 	}
-	return "Config warnings:\n\n" + strings.Join(m.warnings, "\n")
+	if m.reloadNote != "" {
+		text = m.reloadNote + "\n\n" + text
+	}
+	return text
 }
 
 // activeJobBody is what the output panel shows for the active job: its
@@ -1293,6 +1335,9 @@ func (m Model) renderBase() string {
 	}
 	if m.inputFocus {
 		outputTitle += " (input mode)"
+	}
+	if st := m.searchStatus(); st != "" {
+		outputTitle += " · " + st
 	}
 	outInner := outputWidth - 2
 	outBody := m.viewport.View() + "\n" + m.renderOutputFooter(outInner)
@@ -1371,6 +1416,10 @@ func (m Model) renderHeader() string {
 // panel: follow/run state on the left, contextual hints on the right.
 func (m Model) renderOutputFooter(width int) string {
 	dim := lipgloss.NewStyle().Foreground(colorTextDim)
+	if m.search.editing {
+		return spread(" "+keyHint("/", "")+lipgloss.NewStyle().Foreground(colorTextSoft).Render(m.search.query+"▏"),
+			dim.Render("enter keep · esc clear")+" ", width)
+	}
 	if m.activeJob == nil {
 		return dim.Render(" idle")
 	}
@@ -1383,8 +1432,13 @@ func (m Model) renderOutputFooter(width int) string {
 	state := fmt.Sprintf("%s %d:%02d", status, int(d.Minutes()), int(d.Seconds())%60)
 	left := dim.Render(" " + follow + " · " + state)
 	right := ""
-	if status == jobs.StatusRunning {
+	if m.search.query != "" {
+		left += dim.Render(" · /" + m.search.query)
+		right = keyHint("n/N", "next/prev") + "  " + keyHint("esc", "clear") + " "
+	} else if status == jobs.StatusRunning {
 		right = keyHint("i", "type into job") + " "
+	} else {
+		right = keyHint("/", "search") + " "
 	}
 	return spread(left, right, width)
 }
@@ -1688,8 +1742,14 @@ func (m Model) keyBarText() string {
 		return keyBar("enter", "send", "esc", "dismiss, job keeps waiting")
 	case m.inputFocus:
 		return keyBar("esc", "leave input mode") + lipgloss.NewStyle().Foreground(colorTextDim).Render("   keys go straight to the process")
+	case m.search.editing:
+		return keyBar("enter", "keep the search", "esc", "clear it")
 	case m.filtering:
 		return keyBar("enter", "confirm", "esc", "clear")
+	case m.focus == focusOutput && m.search.query != "":
+		return keyBar("n/N", "next/previous match", "/", "new search", "esc", "clear", "tab", "next panel", "?", "help", "q", "quit")
+	case m.focus == focusOutput:
+		return keyBar("↑/↓", "scroll", "/", "search", "i", "type into job", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	case m.focus == focusJobs:
 		return keyBar("↑/↓", "select", "enter", "view", "x", "stop", "r", "restart", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	}
@@ -1746,6 +1806,8 @@ func (m Model) renderHelp() string {
 
 		title.Render("Output panel") + "\n" +
 			row("↑/↓, pgup/pgdn", "scroll (breaks follow-tail until you reach the bottom)") + "\n" +
+			row("/", "search the output (smart case: capitals make it exact)") + "\n" +
+			row("n / N", "next / previous match; esc clears the search") + "\n" +
 			row("i", "focus mode: send keys straight to the running process") + "\n" +
 			row("esc", "leave focus mode"),
 

@@ -3,17 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
 
 	"lazycmd/internal/ask"
 	"lazycmd/internal/config"
-	"lazycmd/internal/features"
-	"lazycmd/internal/trust"
 	"lazycmd/internal/ui"
+	"lazycmd/internal/watch"
 )
 
 func main() {
@@ -39,79 +36,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	projectDir := filepath.Join(cwd, ".lazycmd")
+	a := newApp(globalDir, stateDir, cwd)
+	loaded := a.load()
 
-	// A central profile (~/.config/lazycmd/projects/*.yaml) can add
-	// commands, set form defaults and tune features for this repo.
-	profile, warnings := config.LoadProfile(globalDir, cwd)
-	var included []config.ResolvedCommand
-	var profileFeatures []config.FeaturesFile
-	if profile != nil {
-		var w []string
-		included, w = profile.Includes()
-		warnings = append(warnings, w...)
-		profileFeatures = append(profileFeatures, profile.File.FeaturesFile)
+	model := ui.New(loaded.Groups, loaded.Warnings, stateDir, cwd)
+	if name := a.profile(); name != "" {
+		model = model.WithProfile(name)
 	}
-
-	// build assembles the full command list. With repoCommands false the
-	// repo's own .lazycmd/ commands are left out (its config.yaml still
-	// applies: it only switches features and settings, it runs nothing;
-	// its maven goals are limited to plain goal names).
-	build := func(repoCommands bool) ([]config.Group, []string) {
-		dir := projectDir
-		if !repoCommands {
-			dir = ""
-		}
-		var w []string
-		groups, discWarnings := config.DiscoverWith(globalDir, dir, included)
-		w = append(w, discWarnings...)
-		groups = append([]config.Group{config.AdhocGroup()}, groups...)
-
-		enabled, settings, mavenGoals, featCfgWarnings := config.EnabledFeatures(globalDir, projectDir, profileFeatures...)
-		featureGroups, featRunWarnings := features.Discover(cwd, enabled, settings, mavenGoals)
-		groups = append(groups, featureGroups...)
-		w = append(w, featCfgWarnings...)
-		w = append(w, featRunWarnings...)
-
-		// Overrides and defaults go last so they can reach feature
-		// commands too; defaults after params, so they win.
-		if profile != nil {
-			w = append(w, config.ApplyParamOverrides(groups, profile.File.Params)...)
-			w = append(w, config.ApplyTerminal(groups, profile.File.Terminal)...)
-			w = append(w, config.ApplyConfirm(groups, profile.File.Confirm)...)
-			w = append(w, config.ApplyDefaults(groups, profile.File.Defaults)...)
-		}
-		return groups, w
+	if loaded.Pending != nil {
+		model = model.WithPendingTrust(*loaded.Pending)
 	}
-
-	fullGroups, buildWarnings := build(true)
-	warnings = append(warnings, buildWarnings...)
-
-	// A repo's own commands are listed only once the user has allowed
-	// them (and again after they change); see package trust.
-	repoCmds, _ := config.ProjectCommands(projectDir)
-	groups := fullGroups
-	var pending *ui.PendingTrust
-	if len(repoCmds) > 0 {
-		fingerprint := trust.Fingerprint(projectDir, repoCmds)
-		if state := trust.Load(stateDir).Check(cwd, fingerprint); state != trust.Allowed {
-			groups, _ = build(false)
-			pending = &ui.PendingTrust{
-				State:       state,
-				Commands:    repoCmds,
-				Fingerprint: fingerprint,
-				FullGroups:  fullGroups,
-			}
-		}
-	}
-
-	model := ui.New(groups, warnings, stateDir, cwd)
-	if profile != nil {
-		model = model.WithProfile(strings.TrimSuffix(filepath.Base(profile.Source), filepath.Ext(profile.Source)))
-	}
-	if pending != nil {
-		model = model.WithPendingTrust(*pending)
-	}
+	// The command list is rebuilt when the files it was built from change.
+	model = model.WithReload(ui.FileReloader{Watcher: watch.New(a.watchPaths), Load: a.load})
 	// Questions from jobs (lazycmd ask/pick) arrive on this socket. If it
 	// can't be set up, scripts fall back to asking on a terminal.
 	srv, err := ask.NewServer(stateDir)

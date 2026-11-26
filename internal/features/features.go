@@ -6,8 +6,10 @@
 package features
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"lazycmd/internal/config"
 )
@@ -85,4 +87,41 @@ func contains(list []string, s string) bool {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// WatchPaths lists the files the features read for repoRoot, so a change
+// to one can rebuild the command list: the fixed names (pom.xml,
+// package.json, lockfiles, compose files, pyproject.toml, vite configs),
+// every pom found below the root, and the package.json of each npm
+// workspace. Missing names are listed too: a file appearing is a change.
+// The search for poms walks folders, so callers should not ask for this
+// on every tick.
+func WatchPaths(repoRoot string) []string {
+	names := []string{
+		"pom.xml", "package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb",
+		"pyproject.toml", "uv.lock", "poetry.lock", "pdm.lock",
+	}
+	names = append(names, composeFiles...)
+	for _, ext := range []string{"js", "ts", "mjs", "cjs", "mts", "cts"} {
+		names = append(names, "vite.config."+ext)
+	}
+	paths := make([]string, 0, len(names)+8)
+	for _, n := range names {
+		paths = append(paths, filepath.Join(repoRoot, n))
+	}
+	walkPoms(repoRoot, func(rel string) bool {
+		if rel != "." {
+			paths = append(paths, filepath.Join(repoRoot, filepath.FromSlash(rel), "pom.xml"))
+		}
+		return true
+	})
+	if data, err := os.ReadFile(filepath.Join(repoRoot, "package.json")); err == nil {
+		var pkg packageJSON
+		if json.Unmarshal(data, &pkg) == nil {
+			for _, ws := range findWorkspaces(repoRoot, pkg.workspacePatterns()) {
+				paths = append(paths, filepath.Join(repoRoot, ws.dir, "package.json"))
+			}
+		}
+	}
+	return paths
 }

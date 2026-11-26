@@ -8,7 +8,7 @@ Next steps after v0.1.3. Between milestones, small releases shipped UX, demo and
 | 2 | v0.1.5 ✓ | `terminal: true`; panel PTY sized; run last | medium |
 | 3 | v0.2.0 ✓ | `confirm:` popup; `lazycmd ask` / `lazycmd pick` | large |
 | 4 | v0.3.0 ✓ | docker compose and Python features; maven in nested poms (a `target` picker) | medium |
-| 5 | v0.4.0 | config reloads by itself; search in output | medium |
+| 5 | v0.4.0 ✓ | config reloads by itself; search in output | medium |
 
 ---
 
@@ -159,7 +159,7 @@ Both follow the existing rules: detection and listing only **read files**, and n
 
 ---
 
-## Milestone 5 (v0.4.0): reload and search
+## Milestone 5 (v0.4.0): reload and search ✓ done
 
 ### Config reloads by itself
 

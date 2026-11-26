@@ -30,7 +30,9 @@ func (m Model) WithAsk(s *ask.Server) Model {
 
 // WithWarning adds a line to the startup warnings.
 func (m Model) WithWarning(w string) Model {
-	m.warnings = append(m.warnings, safetext.Text(w))
+	w = safetext.Text(w)
+	m.warnings = append(m.warnings, w)
+	m.extraWarnings = append(m.extraWarnings, w)
 	return m
 }
 
