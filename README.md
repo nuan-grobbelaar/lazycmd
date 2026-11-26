@@ -77,7 +77,9 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 
 On macOS, option+1/2/3 types `¡ ™ £` unless your terminal treats Option as Meta; both work.
 
-In a params form: `tab`/`shift+tab` or `←`/`→` move between fields (in a text field that has text, `←`/`→` move the cursor instead), `space` toggles a yes/no field, `enter` confirms a field and submits on the last one, `esc` cancels.
+In a params form: `tab`/`shift+tab` or `←`/`→` move between fields, `space` toggles a yes/no field, `enter` confirms a field and submits on the last one, `esc` cancels.
+
+**Text fields are edited on purpose.** A text field (a string, secret or multi-line text) doesn't take keys when you land on it, so `←`/`→` keep paging through the form even over a field that already has a value. Press `space` to start editing (the space isn't typed); the key bar then reads `esc stop editing`, and `←`/`→` move the cursor. `esc` stops editing (a second `esc` cancels the form), and so does moving to another field with `tab` or `enter`. Typing into a field you aren't editing does nothing but say so, and pasted text starts editing. A value that has to start with a space can't be typed first: type it after another character and move the cursor. Selects, yes/no fields and the `lazycmd ask` popups are unchanged.
 
 **Run now:** `alt+enter` (or `ctrl+j`) runs the command straight away with the answers so far, without stepping through the remaining fields. It is refused, with the reason shown in the form, while a required field is empty or a value doesn't match its `pattern`; the `alt+enter run now` hint in the bottom bar appears only when the form is ready to run, and while required fields are empty the bar says how many. Selects and bools use whatever they currently show (their default or first option).
 

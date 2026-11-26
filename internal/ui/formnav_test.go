@@ -23,13 +23,19 @@ func navForm(t *testing.T) *paramsForm {
 	return pf
 }
 
-// press sends k through arrowNav first, as the model does, then to huh.
+// press sends k the way the model does: the edit mode first, then the
+// arrow paging, then huh.
 func press(pf *paramsForm, k tea.KeyMsg) {
+	pf.syncFocus()
+	if pf.textKey(k) {
+		return
+	}
 	if _, ok := pf.arrowNav(k); ok {
 		return
 	}
 	f, _ := pf.form.Update(k)
 	pf.form = f.(*huh.Form)
+	pf.syncFocus()
 }
 
 func focusedIndex(pf *paramsForm) int {
@@ -68,17 +74,124 @@ func TestArrowsPageThroughFields(t *testing.T) {
 	}
 }
 
-func TestArrowsMoveCursorInTextWithText(t *testing.T) {
+var keySpace = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+
+func typeInto(pf *paramsForm, s string) {
+	press(pf, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+}
+
+func TestTextFieldNeedsSpaceBeforeItTakesKeys(t *testing.T) {
 	pf := navForm(t)
-	press(pf, keyRight) // to tag
-	press(pf, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v1")})
-	press(pf, keyLeft)
-	if i := focusedIndex(pf); i != 1 {
-		t.Fatalf("← in a text field with text moved focus to %d", i)
+	press(pf, keyRight) // to tag, a text field
+
+	// Not being edited: typing does nothing but hint, and the arrows page.
+	typeInto(pf, "v1")
+	if got := pf.form.GetFocusedField().GetValue(); got != "" {
+		t.Fatalf("typed %q into a field that isn't being edited", got)
 	}
-	press(pf, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if !strings.Contains(pf.notice, "press space to edit") {
+		t.Errorf("notice = %q", pf.notice)
+	}
+	press(pf, keyRight)
+	press(pf, keyLeft)
+	if focusedIndex(pf) != 1 {
+		t.Fatalf("focus = %d: the arrows should page over an empty text field", focusedIndex(pf))
+	}
+
+	// Space starts editing, and isn't typed itself.
+	press(pf, keySpace)
+	if !pf.editing || pf.form.GetFocusedField().GetValue() != "" {
+		t.Fatalf("editing %v, value %q", pf.editing, pf.form.GetFocusedField().GetValue())
+	}
+	typeInto(pf, "v1")
+	press(pf, keyLeft) // the cursor, not the field
+	if focusedIndex(pf) != 1 {
+		t.Fatalf("← while editing moved focus to %d", focusedIndex(pf))
+	}
+	typeInto(pf, "x")
 	if got := pf.form.GetFocusedField().GetValue(); got != "vx1" {
 		t.Fatalf("value = %q, want the cursor moved left (vx1)", got)
+	}
+
+	// esc stops editing without leaving the form; the arrows page again,
+	// even though the field now has text in it.
+	press(pf, tea.KeyMsg{Type: tea.KeyEsc})
+	if pf.editing || pf.form.State != huh.StateNormal {
+		t.Fatalf("esc: editing %v, state %v", pf.editing, pf.form.State)
+	}
+	press(pf, keyRight)
+	if focusedIndex(pf) != 2 {
+		t.Errorf("focus = %d: the arrows should page over a text field with text", focusedIndex(pf))
+	}
+	if got := pf.fields[1].GetValue(); got != "vx1" {
+		t.Errorf("the text was lost: %q", got)
+	}
+}
+
+func TestEditingEndsWhenFocusMoves(t *testing.T) {
+	pf := navForm(t)
+	press(pf, keyRight)
+	press(pf, keySpace)
+	if !pf.editing {
+		t.Fatal("setup")
+	}
+	// What tab does (huh moves the focus through a follow-up message).
+	pf.form.NextField()
+	pf.syncFocus()
+	if pf.editing {
+		t.Fatal("editing must end when the focus moves on")
+	}
+	pf.form.PrevField()
+	pf.syncFocus()
+	if pf.editing || focusedIndex(pf) != 1 {
+		t.Errorf("editing %v focus %d: coming back to a text field starts in navigation", pf.editing, focusedIndex(pf))
+	}
+	typeInto(pf, "z")
+	if pf.form.GetFocusedField().GetValue() != "" {
+		t.Error("typing should be ignored until space")
+	}
+}
+
+func TestPasteStartsEditing(t *testing.T) {
+	pf := navForm(t)
+	press(pf, keyRight)
+	press(pf, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pasted"), Paste: true})
+	if !pf.editing || pf.form.GetFocusedField().GetValue() != "pasted" {
+		t.Errorf("editing %v value %q", pf.editing, pf.form.GetFocusedField().GetValue())
+	}
+}
+
+func TestOtherFieldsAreNotAffectedByEditMode(t *testing.T) {
+	pf := navForm(t)
+	// env is a select: letters filter/move it, space isn't swallowed, and
+	// there's no edit mode to enter.
+	if pf.onTextField() || pf.textKey(keySpace) {
+		t.Error("a select shouldn't have an edit mode")
+	}
+}
+
+func TestEditModeThroughTheModel(t *testing.T) {
+	m := ready(t, group(config.ResolvedCommand{ID: "global:t", Name: "t", Run: "true",
+		Params: []config.Param{{Name: "a", Type: config.ParamString}, {Name: "b", Type: config.ParamString}}}), t.TempDir(), t.TempDir())
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.activeForm == nil {
+		t.Fatal("the form should be open")
+	}
+	if bar := ansi.Strip(m.keyBarText()); !strings.Contains(bar, "space edit") || strings.Contains(bar, "stop editing") {
+		t.Errorf("key bar = %q", bar)
+	}
+
+	m, _ = sendKey(t, m, keySpace)
+	if bar := ansi.Strip(m.keyBarText()); !strings.Contains(bar, "esc stop editing") {
+		t.Errorf("key bar while editing = %q", bar)
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.activeForm == nil {
+		t.Fatal("esc while editing should stop editing, not cancel the form")
+	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.activeForm != nil {
+		t.Error("esc when not editing still cancels the form")
 	}
 }
 

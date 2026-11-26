@@ -45,7 +45,12 @@ type paramsForm struct {
 	form       *huh.Form
 	fields     []huh.Field // in order, for ← / → paging
 	group      *huh.Group  // the form's only group, drawn by view
-	scroll     int         // first content line shown by view
+	// A text field takes keys only once editing is on (space turns it
+	// on), so ←/→ page through the fields even over a field that has
+	// text. lastFocus is the field editing belongs to.
+	editing   bool
+	lastFocus huh.Field
+	scroll    int // first content line shown by view
 
 	strVals   map[string]*string
 	boolVals  map[string]*bool
@@ -153,9 +158,65 @@ func formTheme() *huh.Theme {
 	return t
 }
 
+// onTextField reports whether the focused field is a text one: a string,
+// a secret or a multi-line text.
+func (pf *paramsForm) onTextField() bool {
+	switch pf.form.GetFocusedField().(type) {
+	case *huh.Input, *huh.Text:
+		return true
+	}
+	return false
+}
+
+// syncFocus ends editing when the focus has moved to another field.
+func (pf *paramsForm) syncFocus() {
+	if f := pf.form.GetFocusedField(); f != pf.lastFocus {
+		pf.lastFocus, pf.editing = f, false
+	}
+}
+
+// passInNavigation are the keys a text field lets through while it isn't
+// being edited: moving between fields, the form's own keys, run now.
+var passInNavigation = map[string]bool{
+	"tab": true, "shift+tab": true, "enter": true, "esc": true, "ctrl+c": true,
+	"up": true, "down": true, "left": true, "right": true,
+	"ctrl+j": true, "alt+enter": true, "shift+enter": true,
+}
+
+// textKey applies the edit mode to a key on a text field. A text field
+// starts out not being edited: ←/→ page through the fields, and space
+// (which isn't typed) starts editing; while editing, esc stops. Any other
+// key that would change the text is swallowed with a hint, so typing
+// into a field that isn't being edited doesn't half-work. It reports
+// true when the key was used up.
+func (pf *paramsForm) textKey(k tea.KeyMsg) bool {
+	if !pf.onTextField() {
+		return false
+	}
+	if pf.editing {
+		if k.Type == tea.KeyEsc {
+			pf.editing = false
+			return true
+		}
+		return false
+	}
+	switch {
+	case k.Type == tea.KeySpace && !k.Alt:
+		pf.editing = true
+		return true
+	case k.Paste:
+		pf.editing = true // pasted text is meant for the field
+		return false
+	case passInNavigation[k.String()]:
+		return false
+	}
+	pf.notice = "press space to edit this field (←/→ move between fields)"
+	return true
+}
+
 // arrowNav makes ← and → move to the previous and next field. It reports
 // false, leaving the key to huh, where the arrows mean something else: a
-// text field with text in it (they move the cursor) and a select that is
+// text field being edited (they move the cursor) and a select that is
 // being filtered (they move in the filter). It never leaves the form:
 // → on the last field and ← on the first do nothing, so an arrow can't
 // submit it.
@@ -164,15 +225,8 @@ func (pf *paramsForm) arrowNav(k tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	focused := pf.form.GetFocusedField()
-	switch f := focused.(type) {
-	case *huh.Input:
-		if s, _ := f.GetValue().(string); s != "" {
-			return nil, false
-		}
-	case *huh.Text:
-		if s, _ := f.GetValue().(string); s != "" {
-			return nil, false
-		}
+	if pf.onTextField() && pf.editing {
+		return nil, false
 	}
 	if filtering(focused) {
 		return nil, false

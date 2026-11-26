@@ -516,6 +516,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		m.activeForm.notice = ""
+		m.activeForm.syncFocus()
+		if m.activeForm.textKey(key) {
+			return m, nil
+		}
 		if cmd, ok := m.activeForm.arrowNav(key); ok {
 			return m, cmd
 		}
@@ -530,6 +534,7 @@ func (m Model) updateActiveForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	updated, cmd := m.activeForm.form.Update(msg)
 	m.activeForm.form = updated.(*huh.Form)
+	m.activeForm.syncFocus()
 
 	switch m.activeForm.form.State {
 	case huh.StateCompleted:
@@ -1721,12 +1726,21 @@ func (m Model) keyBarText() string {
 	switch {
 	case m.activeForm != nil:
 		hints := []string{"←/→ tab", "field", "enter", "next/run"}
+		switch {
+		case m.activeForm.onTextField() && m.activeForm.editing:
+			hints = []string{"esc", "stop editing", "enter", "next/run"}
+		case m.activeForm.onTextField():
+			hints = []string{"←/→ tab", "field", "space", "edit", "enter", "next/run"}
+		}
 		if len(m.activeForm.problems()) == 0 {
 			hints = append(hints, "alt+enter", "run now")
 		} else if n := m.activeForm.requiredLeft(); n > 0 {
 			hints = append(hints, "*", requiredHint(n))
 		}
-		return keyBar(append(hints, "esc", "cancel")...)
+		if !(m.activeForm.onTextField() && m.activeForm.editing) {
+			hints = append(hints, "esc", "cancel")
+		}
+		return keyBar(hints...)
 	case m.trustPromptOpen:
 		return keyBar("y", "allow this repo's commands", "n/esc", "not now")
 	case m.askPopup != nil:
@@ -1819,7 +1833,8 @@ func (m Model) renderHelp() string {
 			row("?", "the job is waiting for an answer: view it to answer"),
 
 		title.Render("Params form / filter / prompts") + "\n" +
-			row("tab/shift+tab, ←/→", "move between fields (in a text field with text, ←/→ move the cursor)") + "\n" +
+			row("tab/shift+tab, ←/→", "move between fields") + "\n" +
+			row("space", "on a text field: start editing it (esc stops; then ←/→ move the cursor)") + "\n" +
 			row("space", "toggle a yes/no field") + "\n" +
 			row("enter", "confirm a field, or submit the form on the last one") + "\n" +
 			row("alt+enter, ctrl+j", "run now, once every required field is set") + "\n" +

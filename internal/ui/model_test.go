@@ -329,6 +329,7 @@ func TestAdhocCommandRunsTypedTextAsNamedJob(t *testing.T) {
 	if m.activeForm == nil {
 		t.Fatal("enter on the ad-hoc entry should open its form")
 	}
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}) // a text field is edited after space
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo hi && echo there")})
 	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	// huh reports completion through a follow-up message.
@@ -400,6 +401,7 @@ func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
 	}
 
 	// Fill only the first field, never tabbing through the rest.
+	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("sam")})
 	if !strings.Contains(m.keyBarText(), "alt+enter") || !strings.Contains(m.keyBarText(), "run now") {
 		t.Errorf("hint should read alt+enter run now once required fields are set; got %q", m.keyBarText())
