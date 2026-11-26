@@ -123,3 +123,18 @@ maven:
 		t.Errorf("a typo'd key should fail the file: goals %+v, warnings %v", goals, warnings)
 	}
 }
+
+func TestComposeAndPythonSettingsAndSwitches(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "config.yaml"), "compose:\n  command: podman compose\npython:\n  runner: uv\ndisable: [compose]\n")
+	enabled, settings, _, warnings := EnabledFeatures(t.TempDir(), dir)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+	if settings["compose"]["command"] != "podman compose" || settings["python"]["runner"] != "uv" {
+		t.Errorf("settings = %v", settings)
+	}
+	if enabled["compose"] || !enabled["python"] {
+		t.Errorf("enabled = %v", enabled)
+	}
+}

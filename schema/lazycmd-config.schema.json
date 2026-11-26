@@ -9,12 +9,12 @@
     "features": {
       "type": "array",
       "description": "Switch features back on that a broader file disabled.",
-      "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }
+      "items": { "type": "string", "enum": ["maven", "npm", "vite", "compose", "python", "git"] }
     },
     "disable": {
       "type": "array",
       "description": "Features to turn off.",
-      "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }
+      "items": { "type": "string", "enum": ["maven", "npm", "vite", "compose", "python", "git"] }
     },
     "maven": {
       "type": "object",
@@ -37,6 +37,20 @@
           }
         }
         }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "command": { "enum": ["docker compose", "docker-compose", "podman compose"], "description": "The compose CLI to run. Default: docker compose." }
+      }
+    },
+    "python": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "runner": { "enum": ["uv", "poetry", "pdm", "plain"], "description": "How to run scripts and tools. Default: from the lockfile (uv.lock, poetry.lock, pdm.lock), otherwise plain (python -m ...)." }
       }
     },
     "npm": { "type": "object", "additionalProperties": { "type": "string" } },

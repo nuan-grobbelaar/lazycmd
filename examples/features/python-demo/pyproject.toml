@@ -1,0 +1,23 @@
+# Demo for the python feature: lazycmd only reads this file. Run `lc` in
+# this folder to see a command for each script and task, and for the tools
+# configured below. Add uv.lock, poetry.lock or pdm.lock (empty is fine for
+# a look) to see the runner change, or set python.runner in a config.yaml.
+[project]
+name = "demo"
+version = "0.1.0"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+test = ["pytest"]            # pytest is a dependency: python: pytest is offered
+
+[project.scripts]
+demo = "demo.cli:main"
+
+[tool.poe.tasks]
+docs = "mkdocs build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true

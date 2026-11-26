@@ -1,0 +1,15 @@
+# Demo for the compose feature: lazycmd only reads this file (service names
+# and profiles). Nothing here is ever started unless you run a compose
+# command, and the images are tiny stand-ins.
+services:
+  web:
+    image: nginx:alpine
+    ports: ["8080:80"]
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: demo
+  worker:
+    image: alpine
+    command: ["sh", "-c", "while true; do echo working; sleep 5; done"]
+    profiles: [jobs]        # only started with the "jobs" profile

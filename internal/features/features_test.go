@@ -34,15 +34,6 @@ func names(t *testing.T, f Feature, repoRoot string, settings map[string]string)
 	return out
 }
 
-func contains(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}
-
 func TestMavenDetectAndLifecycle(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "pom.xml"), `<project></project>`)
@@ -758,5 +749,504 @@ func TestMavenGoalsFromConfigFileReachDiscover(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("spring-boot:run missing: %+v", groups)
+	}
+}
+
+const composeYAML = `
+services:
+  web:
+    image: nginx
+  db:
+    image: postgres
+  worker:
+    image: app
+    profiles: [jobs, batch]
+  "bad name":
+    image: x
+`
+
+func composeRepo(t *testing.T, name string) string {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, name), composeYAML)
+	return root
+}
+
+func TestComposeDetectedByAnyComposeFileName(t *testing.T) {
+	for _, name := range composeFiles {
+		ok, src := Compose{}.Detect(composeRepo(t, name))
+		if !ok || src != name {
+			t.Errorf("%s: detect = %v %q", name, ok, src)
+		}
+	}
+	if ok, _ := (Compose{}).Detect(t.TempDir()); ok {
+		t.Error("an empty repo has no compose file")
+	}
+}
+
+func TestComposeCommands(t *testing.T) {
+	cmds, err := Compose{}.Commands(composeRepo(t, "compose.yaml"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := mavenNames(cmds)
+	for _, name := range []string{"up", "down", "ps", "logs", "build", "restart", "pull", "exec"} {
+		if _, ok := by["compose: "+name]; !ok {
+			t.Errorf("compose: %s missing; have %v", name, by)
+		}
+	}
+	up := by["compose: up"]
+	var services, profile config.Param
+	for _, p := range up.Params {
+		switch p.Name {
+		case "services":
+			services = p
+		case "profile":
+			profile = p
+		}
+	}
+	if got := strings.Join(services.Options.Values(), ","); got != "db,web,worker" { // "bad name" is skipped
+		t.Errorf("services = %q", got)
+	}
+	if got := strings.Join(profile.Options.Values(), ","); got != ",batch,jobs" { // a leading "none"
+		t.Errorf("profiles = %q", got)
+	}
+	if !by["compose: exec"].Terminal {
+		t.Error("exec is interactive: it needs the real terminal")
+	}
+	if got := up.Preview(map[string]string{"services": "web,db", "detach": "true", "build": "true", "profile": "jobs"}); got != "docker compose --profile jobs up -d --build web db" {
+		t.Errorf("preview = %q", got)
+	}
+	if got := by["compose: logs"].Preview(map[string]string{"follow": "true"}); got != "docker compose logs -f" {
+		t.Errorf("logs preview = %q", got)
+	}
+	if got := by["compose: exec"].Preview(map[string]string{"service": "web", "command": "ls -la /app"}); got != "docker compose exec web sh -c 'ls -la /app'" {
+		t.Errorf("exec preview = %q", got)
+	}
+}
+
+// The shell bodies are run for real, with a stand-in for docker that
+// prints its arguments, so what reaches the CLI is checked, not just the
+// preview text.
+func TestComposeRunScriptsPassTheRightArguments(t *testing.T) {
+	cmds, _ := Compose{}.Commands(composeRepo(t, "compose.yaml"), map[string]string{"command": "podman compose"})
+	by := mavenNames(cmds)
+
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "podman"), "#!/bin/sh\nfor a; do printf '[%s]' \"$a\"; done; echo\n")
+	if err := os.Chmod(filepath.Join(bin, "podman"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(name string, env map[string]string) string {
+		cmd := exec.Command("sh", "-c", by[name].Run)
+		cmd.Env = append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, envList(env)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if got := run("compose: up", map[string]string{"LC_SERVICES": "web,db", "LC_DETACH": "true", "LC_BUILD": "false", "LC_PROFILE": "jobs"}); got != "[compose][--profile][jobs][up][-d][web][db]" {
+		t.Errorf("up = %s", got)
+	}
+	if got := run("compose: up", map[string]string{"LC_SERVICES": "*,$(id)"}); got != "[compose][up][*][$(id)]" {
+		t.Errorf("a service value must stay literal, got %s", got) // no globbing, no expansion
+	}
+	if got := run("compose: down", map[string]string{"LC_VOLUMES": "true"}); got != "[compose][down][-v]" {
+		t.Errorf("down = %s", got)
+	}
+	if got := run("compose: logs", map[string]string{"LC_SERVICE": "web", "LC_FOLLOW": "true"}); got != "[compose][logs][-f][web]" {
+		t.Errorf("logs = %s", got)
+	}
+	if got := run("compose: logs", nil); got != "[compose][logs]" {
+		t.Errorf("logs of everything = %s", got)
+	}
+	if got := run("compose: exec", map[string]string{"LC_SERVICE": "db", "LC_COMMAND": "psql -c 'select 1'; echo hi"}); got != "[compose][exec][db][sh][-c][psql -c 'select 1'; echo hi]" {
+		t.Errorf("exec = %s", got)
+	}
+	if got := run("compose: exec", map[string]string{"LC_SERVICE": "db"}); got != "[compose][exec][db][sh][-c][sh]" {
+		t.Errorf("exec default = %s", got)
+	}
+}
+
+func TestComposeCommandSettingIsAllowlisted(t *testing.T) {
+	root := composeRepo(t, "compose.yaml")
+	for _, bad := range []string{"docker; rm -rf ~", "docker compose && id", "sh"} {
+		if _, err := (Compose{}).Commands(root, map[string]string{"command": bad}); err == nil {
+			t.Errorf("compose.command %q accepted", bad)
+		}
+	}
+	cmds, err := Compose{}.Commands(root, map[string]string{"command": "docker-compose"})
+	if err != nil || !strings.HasSuffix(mavenNames(cmds)["compose: ps"].Run, `exec docker-compose "$@"`) {
+		t.Errorf("docker-compose: %v", err)
+	}
+}
+
+const pyprojectTOML = `
+[project]
+name = "demo"
+dependencies = ["requests>=2", "Pytest-Cov"]
+[project.optional-dependencies]
+test = ["pytest[extras] >= 7"]
+[project.scripts]
+demo = "demo.cli:main"
+"-bad" = "x:y"
+[tool.poetry.scripts]
+serve = "demo.web:run"
+[tool.pdm.scripts]
+lint = "ruff check ."
+[tool.poe.tasks]
+docs = "mkdocs build"
+"a; touch pwned" = "echo no"
+[tool.ruff]
+line-length = 100
+[tool.mypy]
+strict = true
+`
+
+func pyRepo(t *testing.T, toml string, lock string) string {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pyproject.toml"), toml)
+	if lock != "" {
+		writeFile(t, filepath.Join(root, lock), "")
+	}
+	return root
+}
+
+func TestPythonDetectAndCommands(t *testing.T) {
+	root := pyRepo(t, pyprojectTOML, "uv.lock")
+	if ok, src := (Python{}).Detect(root); !ok || src != "pyproject.toml" {
+		t.Fatalf("detect = %v %q", ok, src)
+	}
+	cmds, err := Python{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := mavenNames(cmds)
+	for _, name := range []string{"demo", "serve", "lint", "docs", "a; touch pwned", "pytest", "ruff check", "ruff format", "mypy"} {
+		if _, ok := by["python: "+name]; !ok {
+			t.Errorf("python: %s missing; have %v", name, by)
+		}
+	}
+	if _, ok := by["python: -bad"]; ok {
+		t.Error("a name starting with - would be read as an option")
+	}
+	want := map[string]string{
+		"python: demo":        "exec uv run demo",
+		"python: serve":       "exec uv run serve",
+		"python: lint":        "exec pdm run lint", // only pdm knows pdm's scripts
+		"python: docs":        "exec uv run poe docs",
+		"python: ruff format": "set -- format\nexec uv run ruff \"$@\"",
+		"python: mypy":        `exec uv run mypy "$@"`,
+	}
+	for name, run := range want {
+		if by[name].Run != run {
+			t.Errorf("%s: run = %q, want %q", name, by[name].Run, run)
+		}
+	}
+	if got := by["python: pytest"].Preview(map[string]string{"filter": "slow and not db", "path": "tests/unit"}); got != "uv run pytest -k 'slow and not db' -- tests/unit" {
+		t.Errorf("pytest preview = %q", got)
+	}
+}
+
+func TestPythonRunnerFromLockfileAndSetting(t *testing.T) {
+	cases := []struct{ lock, setting, want string }{
+		{"uv.lock", "", "exec uv run demo"},
+		{"poetry.lock", "", "exec poetry run demo"},
+		{"pdm.lock", "", "exec pdm run demo"},
+		{"", "", "exec demo"},
+		{"uv.lock", "plain", "exec demo"},
+		{"", "poetry", "exec poetry run demo"},
+	}
+	for _, c := range cases {
+		root := pyRepo(t, "[project.scripts]\ndemo = \"d:m\"\n", c.lock)
+		cmds, err := Python{}.Commands(root, map[string]string{"runner": c.setting})
+		if err != nil || mavenNames(cmds)["python: demo"].Run != c.want {
+			t.Errorf("lock %q setting %q: %q, %v; want %q", c.lock, c.setting, mavenNames(cmds)["python: demo"].Run, err, c.want)
+		}
+	}
+	for _, bad := range []string{"uv; id", "pip", "uv run"} {
+		if _, err := (Python{}).Commands(pyRepo(t, "[project]\n", ""), map[string]string{"runner": bad}); err == nil {
+			t.Errorf("python.runner %q accepted", bad)
+		}
+	}
+}
+
+func TestPythonPytestOnlyWhenConfiguredOrDependency(t *testing.T) {
+	has := func(toml string) bool {
+		cmds, err := Python{}.Commands(pyRepo(t, toml, ""), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ok := mavenNames(cmds)["python: pytest"]
+		return ok
+	}
+	for name, toml := range map[string]string{
+		"ini_options":      "[tool.pytest.ini_options]\naddopts = \"-q\"\n",
+		"dependency":       "[project]\ndependencies = [\"pytest>=8\"]\n",
+		"dependency group": "[dependency-groups]\ndev = [\"pytest\", {include-group = \"x\"}]\n",
+		"poetry":           "[tool.poetry.group.dev.dependencies]\npytest = \"^8\"\n",
+	} {
+		if !has(toml) {
+			t.Errorf("%s: pytest not offered", name)
+		}
+	}
+	// pytest-cov alone is not pytest.
+	if has("[project]\ndependencies = [\"pytest-cov\", \"requests\"]\n") || has("[project]\nname = \"x\"\n") {
+		t.Error("pytest offered without being configured or depended on")
+	}
+}
+
+// The shell bodies run for real against stand-ins that print their
+// arguments, so what reaches the tools is checked.
+func TestPythonRunScriptsPassTheRightArguments(t *testing.T) {
+	root := pyRepo(t, pyprojectTOML, "uv.lock")
+	cmds, _ := Python{}.Commands(root, nil)
+	by := mavenNames(cmds)
+
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "uv"), "#!/bin/sh\nfor a; do printf '[%s]' \"$a\"; done; echo\n")
+	if err := os.Chmod(filepath.Join(bin, "uv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(name string, env map[string]string) string {
+		cmd := exec.Command("sh", "-c", by[name].Run)
+		cmd.Dir = t.TempDir() // a file the script creates would land here
+		cmd.Env = append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, envList(env)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(cmd.Dir, "pwned")); err == nil {
+			t.Fatalf("%s: a task name was run as shell code", name)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if got := run("python: pytest", map[string]string{"LC_FILTER": "a b", "LC_PATH": "-x/tests"}); got != "[run][pytest][-k][a b][--][-x/tests]" {
+		t.Errorf("pytest = %s", got)
+	}
+	if got := run("python: pytest", nil); got != "[run][pytest]" {
+		t.Errorf("bare pytest = %s", got)
+	}
+	if got := run("python: docs", nil); got != "[run][poe][docs]" {
+		t.Errorf("poe = %s", got)
+	}
+	if got := run("python: a; touch pwned", nil); got != "[run][poe][a; touch pwned]" {
+		t.Errorf("quoted name = %s", got)
+	}
+	if got := run("python: ruff check", nil); got != "[run][ruff][check]" {
+		t.Errorf("ruff = %s", got)
+	}
+}
+
+func TestPythonBrokenTomlIsAnError(t *testing.T) {
+	if _, err := (Python{}).Commands(pyRepo(t, "[project\nname=", ""), nil); err == nil {
+		t.Error("a pyproject.toml that doesn't parse should be reported")
+	}
+}
+
+// The demo folders in examples/ are documentation; keep them loading.
+func TestFeatureExamplesLoad(t *testing.T) {
+	dir := filepath.Join("..", "..", "examples", "features")
+
+	cmds, err := Compose{}.Commands(filepath.Join(dir, "compose-demo"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := mavenNames(cmds)["compose: up"]
+	var profile bool
+	for _, p := range up.Params {
+		profile = profile || p.Name == "profile"
+	}
+	if len(cmds) != 8 || !profile {
+		t.Errorf("compose demo: %d commands, profile pick %v", len(cmds), profile)
+	}
+
+	cmds, err = Maven{}.Commands(filepath.Join(dir, "maven-monorepo"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := mavenNames(cmds)
+	if got := strings.Join(targetOptions(by["maven: test"]), ","); got != "services/billing::,services/billing::api,services/billing::web,services/orders::" {
+		t.Errorf("maven demo targets = %q", got)
+	}
+	if got := strings.Join(targetOptions(by["maven: spring-boot:run"]), ","); got != "services/billing::api" {
+		t.Errorf("maven demo run targets = %q", got)
+	}
+	if got := strings.Join(targetOptions(by["maven: spotless:check"]), ","); got != "services/orders::" {
+		t.Errorf("maven demo spotless targets = %q", got)
+	}
+
+	cmds, err = Python{}.Commands(filepath.Join(dir, "python-demo"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by = mavenNames(cmds)
+	for _, name := range []string{"demo", "docs", "pytest", "ruff check", "ruff format", "mypy"} {
+		if _, ok := by["python: "+name]; !ok {
+			t.Errorf("python demo: %s missing; have %v", name, by)
+		}
+	}
+}
+
+func writePom(t *testing.T, root, dir, body string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, dir, "pom.xml"), "<project>"+body+"</project>")
+}
+
+func targetOptions(c config.ResolvedCommand) []string {
+	for _, p := range c.Params {
+		if p.Name == "target" {
+			return p.Options.Values()
+		}
+	}
+	return nil
+}
+
+// A monorepo of independent Maven projects, with no pom at the root.
+func monorepo(t *testing.T) string {
+	root := t.TempDir()
+	writePom(t, root, "services/billing", `<modules><module>api</module><module>web</module></modules>
+		<profiles><profile><id>local</id></profile></profiles>`)
+	writePom(t, root, "services/billing/api", `<build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>`)
+	writePom(t, root, "services/billing/web", ``)
+	writePom(t, root, "services/orders", `<build><plugins><plugin><artifactId>spotless-maven-plugin</artifactId></plugin></plugins></build>`)
+	// Never searched.
+	writePom(t, root, "node_modules/dep", ``)
+	writePom(t, root, "services/orders/target/classes", ``)
+	writePom(t, root, ".hidden/x", ``)
+	writePom(t, root, "services/src/fixture", ``)
+	return root
+}
+
+func TestMavenFindsNestedProjectsWithoutRootPom(t *testing.T) {
+	root := monorepo(t)
+	if ok, src := (Maven{}).Detect(root); !ok || src != "nested pom.xml files" {
+		t.Fatalf("detect = %v %q", ok, src)
+	}
+	cmds, err := Maven{}.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := mavenNames(cmds)
+
+	// billing's modules belong to billing; nothing in the skipped folders is a project.
+	want := "services/billing::,services/billing::api,services/billing::web,services/orders::"
+	if got := strings.Join(targetOptions(by["maven: test"]), ","); got != want {
+		t.Errorf("test targets = %q, want %q", got, want)
+	}
+	// Plugin goals only where their plugin is declared.
+	if got := strings.Join(targetOptions(by["maven: spotless:check"]), ","); got != "services/orders::" {
+		t.Errorf("spotless targets = %q", got)
+	}
+	run, ok := by["maven: spring-boot:run"]
+	if !ok || strings.Join(targetOptions(run), ",") != "services/billing::api" {
+		t.Errorf("spring-boot:run = %v %v", ok, targetOptions(run))
+	}
+	// The label shows project and module; the value carries both.
+	for _, p := range by["maven: test"].Params {
+		if p.Name == "target" && p.Options[1].Display() != "services/billing › api" {
+			t.Errorf("label = %q", p.Options[1].Display())
+		}
+	}
+	if got := by["maven: test"].Preview(map[string]string{"target": "services/billing::api", "also_make": "true", "profile": "local"}); got != "mvn -f services/billing/pom.xml -pl api -am -Plocal test" {
+		t.Errorf("preview = %q", got)
+	}
+	if got := run.Preview(map[string]string{"target": "services/billing::api", "also_make": "true", "spring_profiles": "dev"}); got != "mvn -f services/billing/pom.xml -pl api -Dspring-boot.run.profiles=dev spring-boot:run" {
+		t.Errorf("run preview = %q (no -am for a run goal)", got)
+	}
+}
+
+func TestMavenProjectScriptsRunWithTheRightArguments(t *testing.T) {
+	root := monorepo(t)
+	// A folder named like shell code must stay a plain argument.
+	writePom(t, root, "x$(touch pwned)", ``)
+	cmds, _ := Maven{}.Commands(root, nil)
+	by := mavenNames(cmds)
+
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "mvn"), "#!/bin/sh\nfor a; do printf '[%s]' \"$a\"; done; echo\n")
+	if err := os.Chmod(filepath.Join(bin, "mvn"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(name string, env map[string]string) (string, error) {
+		cmd := exec.Command("sh", "-c", by[name].Run)
+		cmd.Dir = t.TempDir()
+		cmd.Env = append([]string{"PATH=" + bin + ":/usr/bin:/bin"}, envList(env)...)
+		out, err := cmd.CombinedOutput()
+		if _, statErr := os.Stat(filepath.Join(cmd.Dir, "pwned")); statErr == nil {
+			t.Fatal("a folder name was run as shell code")
+		}
+		return strings.TrimSpace(string(out)), err
+	}
+
+	if got, _ := run("maven: test", map[string]string{"LC_TARGET": "services/billing::api", "LC_ALSO_MAKE": "true", "LC_PROFILE": "local"}); got != "[-f][services/billing/pom.xml][-pl][api][-am][-Plocal][test]" {
+		t.Errorf("module = %s", got)
+	}
+	if got, _ := run("maven: test", map[string]string{"LC_TARGET": "services/orders::", "LC_ALSO_MAKE": "true"}); got != "[-f][services/orders/pom.xml][test]" {
+		t.Errorf("whole project = %s (no -pl, no -am)", got)
+	}
+	if got, _ := run("maven: package", map[string]string{"LC_TARGET": "x$(touch pwned)::"}); got != "[-f][x$(touch pwned)/pom.xml][package]" {
+		t.Errorf("odd folder name = %s", got)
+	}
+	if got, _ := run("maven: spring-boot:run", map[string]string{"LC_TARGET": "services/billing::api", "LC_SPRING_PROFILES": "dev,local"}); got != "[-f][services/billing/pom.xml][-pl][api][-Dspring-boot.run.profiles=dev,local][spring-boot:run]" {
+		t.Errorf("run goal = %s", got)
+	}
+	if got, err := run("maven: test", nil); err == nil || !strings.Contains(got, "no target picked") {
+		t.Errorf("without a target: %q, %v", got, err)
+	}
+}
+
+func TestMavenRootPomWithAnIndependentProject(t *testing.T) {
+	root := t.TempDir()
+	writePom(t, root, ".", `<modules><module>core</module></modules>`)
+	writePom(t, root, "core", ``)
+	writePom(t, root, "tools/gen", ``) // not a module of the root: a project of its own
+	cmds, _ := Maven{}.Commands(root, nil)
+	if got := strings.Join(targetOptions(mavenNames(cmds)["maven: compile"]), ","); got != ".::,.::core,tools/gen::" {
+		t.Errorf("targets = %q", got)
+	}
+}
+
+func TestMavenSingleRootProjectKeepsTheSimpleForm(t *testing.T) {
+	root := t.TempDir()
+	writePom(t, root, ".", `<modules><module>core</module><module>api</module></modules>`)
+	writePom(t, root, "core", ``)
+	writePom(t, root, "api", ``)
+	cmds, _ := Maven{}.Commands(root, nil)
+	test := mavenNames(cmds)["maven: test"]
+	if targetOptions(test) != nil {
+		t.Error("a single project with modules must keep module / also_make, not a target")
+	}
+	var module bool
+	for _, p := range test.Params {
+		module = module || p.Name == "module"
+	}
+	if !module {
+		t.Errorf("params = %+v", test.Params)
+	}
+}
+
+func TestMavenNestedProjectSearchLimits(t *testing.T) {
+	root := t.TempDir()
+	writePom(t, root, "a/b/c/d", ``)   // four folders down: searched
+	writePom(t, root, "a/b/c/d/e", ``) // five: too deep
+	if got := findProjects(root); len(got) != 1 || got[0].dir != "a/b/c/d" {
+		t.Errorf("projects = %+v", got)
+	}
+
+	// A symlink out of the repo isn't followed.
+	outside := t.TempDir()
+	writePom(t, outside, "secret", ``)
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range findProjects(root) {
+		if strings.HasPrefix(p.dir, "link") {
+			t.Errorf("followed a symlink to %s", p.dir)
+		}
+	}
+	if ok, _ := (Maven{}).Detect(t.TempDir()); ok {
+		t.Error("an empty repo has no maven project")
 	}
 }

@@ -77,7 +77,7 @@ The command list is grouped, top to bottom:
 1. **Ad-hoc**: `run command…`, which asks for any shell command line and runs it as a job in the current folder.
 2. **Global**: scripts in `~/.config/lazycmd/scripts/`, most-used-in-this-repo first.
 3. **This project**: scripts and commands from the repo's `.lazycmd/`, plus anything a [profile](#project-profiles) includes.
-4. **Discovered**: one group per detected [feature](#features) (Maven, NPM, Vite, git), labelled with its source file.
+4. **Discovered**: one group per detected [feature](#features) (Maven, NPM, Vite, Docker Compose, Python, git), labelled with its source file.
 
 Rules:
 - A project command **shadows** a global command with the same name. Such a command is shown in **yellow**, and the first time you run it in a repo lazycmd stops and shows which of your scripts it hides and what it will run instead (`y` runs it, anything else cancels). This happens before its form opens, so nothing from the project runs until you say yes. After the first run in that repo it isn't asked again. Deleting `usage.json` brings the question back. To try it, see the `hello` demo in [`examples/`](examples/README.md#try-them-in-this-repo).
@@ -312,9 +312,9 @@ An entry that breaks the rules is skipped with a warning; the rest of the file s
 
 | Key | Meaning |
 |---|---|
-| `disable` | list of features to turn off: `maven`, `npm`, `vite`, `git` |
+| `disable` | list of features to turn off: `maven`, `npm`, `vite`, `compose`, `python`, `git` |
 | `features` | list of features to switch back on after a broader file disabled them |
-| `maven`, `npm`, `vite`, `git` | per-feature settings (string values) |
+| `maven`, `npm`, `vite`, `compose`, `python`, `git` | per-feature settings (string values) |
 
 All features are **on by default** and only show when their files are detected, so there is nothing to enable. Order of application: global file, then a matching [profile](#project-profiles), then the repo's own file. Settings override key by key; `disable` / `features` apply in that same order.
 
@@ -324,7 +324,7 @@ maven:
   default_profile: local
 ```
 
-Settings in use: `maven.default_profile` preselects the profile param on Maven commands, and `maven.goals` [adds goals or changes how they're detected](#maven-goals-teaching-lazycmd-your-plugins). The `npm`, `vite` and `git` blocks are accepted but currently have no settings.
+Settings in use: `maven.default_profile` preselects the profile param on Maven commands, and `maven.goals` [adds goals or changes how they're detected](#maven-goals-teaching-lazycmd-your-plugins). `compose.command` picks the compose CLI (`docker compose`, the default, `docker-compose` or `podman compose`), and `python.runner` how Python scripts and tools run (`uv`, `poetry`, `pdm` or `plain`; by default from the lockfile). The `npm`, `vite` and `git` blocks are accepted but currently have no settings.
 
 ## Features
 
@@ -332,15 +332,32 @@ Features only **read files** (never run `mvn`, `npm`, `git` to find out what exi
 
 | Feature | Detected by | Commands |
 |---|---|---|
-| `maven` | `pom.xml` | the lifecycle phases (`validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`); `spotless:check`, `checkstyle:check`, `spotbugs:check`, `pmd:check` when the root pom declares those plugins; and `spring-boot:run`, `quarkus:dev`, `jetty:run` when the root pom **or any module pom** declares that plugin |
+| `maven` | `pom.xml` at the root, or in folders below it ([several projects](#maven-in-a-monorepo)) | the lifecycle phases (`validate`, `compile`, `test`, `package`, `verify`, `install`, `deploy`); `spotless:check`, `checkstyle:check`, `spotbugs:check`, `pmd:check` when the root pom declares those plugins; and `spring-boot:run`, `quarkus:dev`, `jetty:run` when the root pom **or any module pom** declares that plugin |
 | `npm` | `package.json` | one command per script. The runner comes from the lockfile: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, otherwise npm |
 | `vite` | `vite.config.*` | `dev`, `preview`, `build` |
+| `compose` | `compose.yaml`, `compose.yml`, `docker-compose.yaml` or `docker-compose.yml` | `up`, `down`, `ps`, `logs`, `build`, `restart`, `pull` and `exec`, with the compose file's services as choices |
+| `python` | `pyproject.toml` | one command per script (`[project.scripts]`, `[tool.poetry.scripts]`) and task (`[tool.pdm.scripts]`, `[tool.poe.tasks]`); `pytest` when it's configured or a dependency; `ruff check` and `ruff format` when `[tool.ruff]` exists; `mypy` when `[tool.mypy]` exists |
 | `git` | `.git` | `fetch --prune`, `pull`, `push`, `stash`, `stash pop`, `worktree list` |
 
 Params added from your files:
 - **Maven** with `<modules>`: a `module` select (runs `-pl`) and an `also_make` checkbox (`-am`, only with a module). With `<profiles>`: a `profile` select (`-P`).
+- **Maven in a monorepo:** see [below](#maven-in-a-monorepo): a `target` select picks the project and module.
 - **Maven run goals** (`spring-boot:run`, `quarkus:dev`, `jetty:run`): module poms are read too, following `<modules>` down a few levels (only paths inside the repo). In a multi-module project a `module` select is required and lists only the modules that declare the plugin (every module when the root does, since children inherit it). There is no `also_make`, since `-am` would try to start the upstream modules too, so run `maven: install` first if the module depends on others. `spring-boot:run` adds a `spring_profiles` field (`-Dspring-boot.run.profiles=`) and `quarkus:dev` a `quarkus_profile` field (`-Dquarkus.profile=`). These are the framework's profiles, separate from Maven's `-P`. A plugin listed only under `<pluginManagement>` doesn't count. For a plugin that comes from a parent pom or a wrapper, see [maven goals](#maven-goals-teaching-lazycmd-your-plugins).
 - **npm** with `workspaces` (array form, or `{packages: [...]}`): every script found in the root or any workspace is listed, and a `workspace` picker chooses where to run it (`.` is the root). It uses the manager's own form: `npm run X --workspace NAME`, `pnpm --filter NAME run X`, `yarn workspace NAME run X`, `bun run --filter NAME X`.
+
+- **Docker Compose:** services (and their `profiles:`) are read from the compose file. `up` has `services` (empty means all), `detach` (default on), `build` and, if any service has profiles, a `profile`. `down` has `volumes`. `logs` has a `service` (`(all services)` by default) and `follow`. `build` has `services` and `no_cache`; `restart` and `pull` have `services`. `exec` has a required `service` and a `command` (default `sh`, run as `sh -c` in the container, so quotes and pipes work); it is interactive, so it takes the real terminal (`⧉`, see [`terminal: true`](#command-spec)). Arguments are passed one by one, so a value can't become shell code. A service or profile name that isn't plain (letters, digits, `. _ -`) is skipped.
+- **Python:** the runner comes from the lockfile (`uv.lock` → `uv run`, `poetry.lock` → `poetry run`, `pdm.lock` → `pdm run`), or from `python.runner`; with none, programs run in whatever environment is active (tools as `python -m <tool>`). Tasks defined in `[tool.pdm.scripts]` always run through `pdm run`, since only pdm knows them, and poethepoet tasks through the runner's `poe`. `pytest` has a `path` and a `filter` (`-k`). Names from the file are quoted, and one starting with `-` is skipped.
+
+### Maven in a monorepo
+
+lazycmd also looks for `pom.xml` in folders below the root (up to 4 levels down), so a repo of independent Maven projects (`services/billing/pom.xml`, `services/orders/pom.xml`) works with or without a pom at the root. Hidden folders, `node_modules`, `target`, `build`, `dist`, `out`, `vendor`, `venv`, `env` and `src` are skipped, and symlinks aren't followed.
+
+- A pom that another pom lists under `<modules>` belongs to it, and is offered as a module. Every other pom is a **project**.
+- **One project at the root** (the usual case): nothing changes. You get the `module` and `also_make` params described above.
+- **Several projects, or none at the root:** each command gets a required `target` select instead. It lists every project (shown by its folder, `(root)` for the root) and each project's modules (`services/billing › api`). Running it is `mvn -f <project>/pom.xml [-pl <module>] [-am] [-P…] <goal>`; `also_make` still only applies with a module.
+- `spotless:check` and the other plugin goals list only the projects whose pom declares the plugin; `spring-boot:run` and the other [run goals](#features) list the modules that declare it (or all of a project's modules when the project's own pom does), and never use `-am`.
+- The `profile` select offers every project's profiles together. A profile a project doesn't have is only a warning from `mvn`.
+- A pom that sits below the root but isn't one of its modules (a sample or a tool) counts as a project of its own, which switches the repo to the `target` form. If that's not what you want, list it under `<modules>` or move it below a skipped folder like `src`.
 
 ### Maven goals: teaching lazycmd your plugins
 
@@ -369,7 +386,7 @@ maven:
 - A built-in goal keeps its form fields (`spring-boot:run` still has `spring_profiles`) and gains your plugin as another way to be detected. Entries from the global file, profile and repo file are added together.
 - A goal that's already a command (`test`, or one you listed twice) isn't added again.
 - A goal made only of letters, digits and `. _ : -` is accepted, since it ends up in the `mvn` command; anything else (`; | $ ( )`, quotes) is skipped with a warning, so a repo's config can't smuggle in a shell command. Fields are limited the same way.
-- This only changes what is offered. It still needs a `pom.xml` in the repo root, and `mvn` runs whatever the pom says.
+- This only changes what is offered. It needs a `pom.xml` somewhere in the repo (see [monorepos](#maven-in-a-monorepo)), and `mvn` runs whatever the pom says. In a monorepo a goal with no `plugin` is offered for every project.
 
 ## Project profiles
 

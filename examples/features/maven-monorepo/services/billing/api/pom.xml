@@ -1,0 +1,7 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>demo</groupId><artifactId>billing</artifactId><version>1.0</version></parent>
+  <artifactId>billing-api</artifactId>
+  <!-- declares the Spring Boot plugin: maven: spring-boot:run offers this module -->
+  <build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
+</project>

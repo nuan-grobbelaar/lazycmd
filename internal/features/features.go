@@ -24,14 +24,18 @@ var All = []Feature{
 	Maven{},
 	Npm{},
 	Vite{},
+	Compose{},
+	Python{},
 	Git{},
 }
 
 var displayName = map[string]string{
-	"maven": "Maven",
-	"npm":   "NPM",
-	"vite":  "Vite",
-	"git":   "git",
+	"maven":   "Maven",
+	"npm":     "NPM",
+	"vite":    "Vite",
+	"compose": "Docker Compose",
+	"python":  "Python",
+	"git":     "git",
 }
 
 // Discover runs every enabled, detected feature and wraps its commands
@@ -68,6 +72,15 @@ func Discover(repoRoot string, enabled map[string]bool, settings map[string]map[
 
 func namespacedName(feature, action string) string { return feature + ": " + action }
 func namespacedID(feature, action string) string   { return feature + ":" + action }
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)

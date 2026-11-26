@@ -21,6 +21,8 @@ type FeaturesFile struct {
 	Maven   MavenSettings     `yaml:"maven,omitempty"`
 	Npm     map[string]string `yaml:"npm,omitempty"`
 	Vite    map[string]string `yaml:"vite,omitempty"`
+	Compose map[string]string `yaml:"compose,omitempty"`
+	Python  map[string]string `yaml:"python,omitempty"`
 	Git     map[string]string `yaml:"git,omitempty"`
 }
 
@@ -153,7 +155,7 @@ func decodeMavenGoal(n *yaml.Node) (MavenGoal, error) {
 // AllFeatures lists every built-in feature. They are all enabled by
 // default: detection only parses files, so a feature simply stays quiet
 // when its files aren't there.
-var AllFeatures = []string{"maven", "npm", "vite", "git"}
+var AllFeatures = []string{"maven", "npm", "vite", "compose", "python", "git"}
 
 // EnabledFeatures starts with every feature on, then applies the global
 // file and then the project file, each able to disable features
@@ -203,10 +205,12 @@ func EnabledFeatures(globalDir, projectDir string, extra ...FeaturesFile) (enabl
 		}
 	}
 	settings = map[string]map[string]string{
-		"maven": pick(func(f FeaturesFile) map[string]string { return f.Maven.Values }),
-		"npm":   pick(func(f FeaturesFile) map[string]string { return f.Npm }),
-		"vite":  pick(func(f FeaturesFile) map[string]string { return f.Vite }),
-		"git":   pick(func(f FeaturesFile) map[string]string { return f.Git }),
+		"maven":   pick(func(f FeaturesFile) map[string]string { return f.Maven.Values }),
+		"npm":     pick(func(f FeaturesFile) map[string]string { return f.Npm }),
+		"vite":    pick(func(f FeaturesFile) map[string]string { return f.Vite }),
+		"compose": pick(func(f FeaturesFile) map[string]string { return f.Compose }),
+		"python":  pick(func(f FeaturesFile) map[string]string { return f.Python }),
+		"git":     pick(func(f FeaturesFile) map[string]string { return f.Git }),
 	}
 	return enabled, settings, mavenGoals, warnings
 }

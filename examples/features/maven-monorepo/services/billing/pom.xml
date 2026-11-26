@@ -1,0 +1,10 @@
+<!-- Demo for maven in a monorepo: there is no pom at the root of this
+     folder. lazycmd finds the projects below it; billing's api and web
+     are its modules, and orders is a project of its own. -->
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId><artifactId>billing</artifactId><version>1.0</version>
+  <packaging>pom</packaging>
+  <modules><module>api</module><module>web</module></modules>
+  <profiles><profile><id>local</id></profile></profiles>
+</project>

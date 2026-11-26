@@ -1,4 +1,4 @@
-# Roadmap: v0.1.4 → v0.3
+# Roadmap: v0.1.4 → v0.4
 
 Next steps after v0.1.3. Between milestones, small releases shipped UX, demo and maven fixes: v0.2.1 (demo scripts), v0.2.2 (form paging, required marks), v0.2.3 (shadowing demo) and v0.2.4 (`maven.goals`). Each milestone is its own branch and release: tests, README, schemas, a tag and a tap bump. They're ordered so that each one builds on the last, and so that the quick correctness fixes ship first.
 
@@ -7,8 +7,8 @@ Next steps after v0.1.3. Between milestones, small releases shipped UX, demo and
 | 1 | v0.1.4 ✓ | `options_cmd` errors shown; param names validated | small |
 | 2 | v0.1.5 ✓ | `terminal: true`; panel PTY sized; run last | medium |
 | 3 | v0.2.0 ✓ | `confirm:` popup; `lazycmd ask` / `lazycmd pick` | large |
-| 4 | v0.2.5 | docker compose and Python features; maven in nested poms (a `project` picker) | medium |
-| 5 | v0.3.0 | config reloads by itself; search in output | medium |
+| 4 | v0.3.0 ✓ | docker compose and Python features; maven in nested poms (a `target` picker) | medium |
+| 5 | v0.4.0 | config reloads by itself; search in output | medium |
 
 ---
 
@@ -121,7 +121,7 @@ targets=$(printf 'api\nweb\nworker\n' | lazycmd pick "Targets?" --multi)
 
 ---
 
-## Milestone 4 (v0.2.5): features
+## Milestone 4 (v0.3.0): features ✓ done
 
 Both follow the existing rules: detection and listing only **read files**, and nothing from the repo runs until you pick a command. Both can be switched off with `disable:` and both have settings. The schema enums gain `compose` and `python`.
 
@@ -159,7 +159,7 @@ Both follow the existing rules: detection and listing only **read files**, and n
 
 ---
 
-## Milestone 5 (v0.3.0): reload and search
+## Milestone 5 (v0.4.0): reload and search
 
 ### Config reloads by itself
 

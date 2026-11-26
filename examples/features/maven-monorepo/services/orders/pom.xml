@@ -1,0 +1,6 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>demo</groupId><artifactId>orders</artifactId><version>1.0</version>
+  <!-- maven: spotless:check lists only this project -->
+  <build><plugins><plugin><artifactId>spotless-maven-plugin</artifactId></plugin></plugins></build>
+</project>

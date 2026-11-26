@@ -20,10 +20,13 @@ type Maven struct{ Goals []config.MavenGoal }
 func (Maven) Name() string { return "maven" }
 
 func (Maven) Detect(repoRoot string) (bool, string) {
-	if !fileExists(filepath.Join(repoRoot, "pom.xml")) {
-		return false, ""
+	if fileExists(filepath.Join(repoRoot, "pom.xml")) {
+		return true, "pom.xml"
 	}
-	return true, "pom.xml"
+	if hasNestedPom(repoRoot) {
+		return true, "nested pom.xml files"
+	}
+	return false, ""
 }
 
 var lifecyclePhases = []string{"validate", "compile", "test", "package", "verify", "install", "deploy"}
@@ -221,9 +224,25 @@ func collectModules(repoRoot string, root pomXML) []mavenModule {
 }
 
 func (mv Maven) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
-	pom, err := parsePomCached(filepath.Join(repoRoot, "pom.xml"))
-	if err != nil {
-		return nil, err
+	// With a root pom and no other project, the plain form below (module
+	// and also_make params) is used. A repo with several Maven projects,
+	// or none at the root, gets a target pick instead (maven_projects.go).
+	var pom pomXML
+	hasRoot := fileExists(filepath.Join(repoRoot, "pom.xml"))
+	if hasRoot {
+		var err error
+		if pom, err = parsePomCached(filepath.Join(repoRoot, "pom.xml")); err != nil {
+			return nil, err
+		}
+	}
+	if !hasRoot || hasNestedPom(repoRoot) {
+		projects := findProjects(repoRoot)
+		if len(projects) > 1 || (len(projects) == 1 && projects[0].dir != ".") {
+			return mv.projectsCommands(projects, settings), nil
+		}
+		if len(projects) == 0 {
+			return nil, nil
+		}
 	}
 
 	var profileParam *config.Param
