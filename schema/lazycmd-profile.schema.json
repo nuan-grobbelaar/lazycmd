@@ -71,7 +71,29 @@
     },
     "features": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Switch features back on that a broader file disabled." },
     "disable": { "type": "array", "items": { "type": "string", "enum": ["maven", "npm", "vite", "git"] }, "description": "Features to turn off for this repo." },
-    "maven": { "type": "object", "additionalProperties": { "type": "string" } },
+    "maven": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "default_profile": { "type": "string", "description": "Preselected value for the profile param on every maven: command." },
+        "goals": {
+          "type": "array",
+          "description": "Extra goals, or extra ways to detect a built-in one (a wrapper around spring-boot-maven-plugin, a plugin inherited from a parent pom).",
+          "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["goal"],
+          "properties": {
+            "goal": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*( [A-Za-z0-9][A-Za-z0-9._:-]*)*$", "description": "What mvn runs, e.g. spring-boot:run, or several separated by spaces (clean install)." },
+            "plugin": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "artifactId, declared in <build><plugins>, that makes the goal show up. Leave out to show the goal in every repo with a pom.xml. For a built-in goal this adds another way to detect it." },
+            "run": { "type": "boolean", "description": "The goal starts an application: it asks for a module and never uses -am. A built-in goal keeps its own setting when this is left out." },
+            "profile_param": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Name of a form field for the framework's own profile. Goes with profile_prop; not module, profile or also_make." },
+            "profile_prop": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "System property that field is passed as, mvn -D<profile_prop>=<value>." }
+          }
+        }
+        }
+      }
+    },
     "npm": { "type": "object", "additionalProperties": { "type": "string" } },
     "vite": { "type": "object", "additionalProperties": { "type": "string" } },
     "git": { "type": "object", "additionalProperties": { "type": "string" } }

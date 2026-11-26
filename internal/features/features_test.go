@@ -260,7 +260,7 @@ func TestDiscoverSkipsDisabledAndUndetected(t *testing.T) {
 	writeFile(t, filepath.Join(root, "pom.xml"), `<project></project>`)
 	// npm is enabled but there's no package.json here, so it must not appear.
 
-	groups, warnings := Discover(root, map[string]bool{"maven": true, "npm": true}, nil)
+	groups, warnings := Discover(root, map[string]bool{"maven": true, "npm": true}, nil, nil)
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
@@ -637,5 +637,126 @@ func TestMavenModuleCycleTerminates(t *testing.T) {
 	mod := paramByName(findCmd(t, cmds, "maven: spring-boot:run"), "module")
 	if mod == nil || strings.Join(mod.Options.Values(), ",") != "a/b" {
 		t.Errorf("module options = %+v, want a/b", mod)
+	}
+}
+
+func mavenNames(cmds []config.ResolvedCommand) map[string]config.ResolvedCommand {
+	out := map[string]config.ResolvedCommand{}
+	for _, c := range cmds {
+		out[c.Name] = c
+	}
+	return out
+}
+
+func TestMavenGoalsWrapperPluginIsDetected(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project><build><plugins>
+		<plugin><artifactId>acme-boot-maven-plugin</artifactId></plugin>
+	</plugins></build></project>`)
+
+	cmds, _ := Maven{}.Commands(root, nil)
+	if _, ok := mavenNames(cmds)["maven: spring-boot:run"]; ok {
+		t.Fatal("the wrapper isn't known yet, spring-boot:run shouldn't show")
+	}
+
+	m := Maven{Goals: []config.MavenGoal{{Goal: "spring-boot:run", Plugin: "acme-boot-maven-plugin"}}}
+	cmds, err := m.Commands(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, ok := mavenNames(cmds)["maven: spring-boot:run"]
+	if !ok {
+		t.Fatalf("wrapper plugin not detected: %v", mavenNames(cmds))
+	}
+	// It is still the built-in run goal: it keeps the spring profiles field.
+	var hasProfiles bool
+	for _, p := range run.Params {
+		hasProfiles = hasProfiles || p.Name == "spring_profiles"
+	}
+	if !hasProfiles || !strings.HasSuffix(run.Run, "exec mvn \"$@\" spring-boot:run") {
+		t.Errorf("run = %q, params = %+v", run.Run, run.Params)
+	}
+	for _, g := range pluginGoals {
+		if g.goal == "spring-boot:run" && len(g.artifactIDs) != 1 {
+			t.Errorf("the built-in table was changed: %v", g.artifactIDs)
+		}
+	}
+}
+
+func TestMavenGoalsWithoutPluginAlwaysShowAndPickModules(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project><modules><module>api</module><module>web</module></modules></project>`)
+	writeFile(t, filepath.Join(root, "api", "pom.xml"), `<project/>`)
+	writeFile(t, filepath.Join(root, "web", "pom.xml"), `<project/>`)
+
+	m := Maven{Goals: []config.MavenGoal{{Goal: "spring-boot:run"}}}
+	cmds, _ := m.Commands(root, nil)
+	run, ok := mavenNames(cmds)["maven: spring-boot:run"]
+	if !ok {
+		t.Fatal("a goal with no plugin should always show")
+	}
+	var mod config.Param
+	for _, p := range run.Params {
+		if p.Name == "module" {
+			mod = p
+		}
+	}
+	if got := strings.Join(mod.Options.Values(), ","); got != "api,web" || !mod.Required {
+		t.Errorf("module = %+v, want a required pick of every module", mod)
+	}
+}
+
+func TestMavenGoalsCustomGoalAndDuplicates(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pom.xml"), `<project/>`)
+	yes := true
+	m := Maven{Goals: []config.MavenGoal{
+		{Goal: "clean install"},
+		{Goal: "test"}, // already a lifecycle command
+		{Goal: "acme:serve", Run: &yes, ProfileParam: "acme_env", ProfileProp: "acme.env"},
+	}}
+	cmds, _ := m.Commands(root, nil)
+	byName := mavenNames(cmds)
+	if c, ok := byName["maven: clean install"]; !ok || !strings.HasSuffix(c.Run, "exec mvn \"$@\" clean install") {
+		t.Errorf("clean install = %+v", c)
+	}
+	n := 0
+	for _, c := range cmds {
+		if c.Name == "maven: test" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("maven: test listed %d times", n)
+	}
+	serve, ok := byName["maven: acme:serve"]
+	if !ok || !strings.Contains(serve.Run, `-Dacme.env=$LC_ACME_ENV`) {
+		t.Errorf("acme:serve = %+v", serve)
+	}
+	if got := serve.Preview(map[string]string{"acme_env": "dev"}); got != "mvn acme:serve -Dacme.env=dev" {
+		t.Errorf("preview = %q", got)
+	}
+}
+
+// config.yaml -> EnabledFeatures -> Discover, the way main wires it.
+func TestMavenGoalsFromConfigFileReachDiscover(t *testing.T) {
+	repo, cfg := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(repo, "pom.xml"), `<project><build><plugins>
+		<plugin><artifactId>acme-boot-maven-plugin</artifactId></plugin></plugins></build></project>`)
+	writeFile(t, filepath.Join(cfg, "config.yaml"), "maven:\n  goals:\n    - { goal: spring-boot:run, plugin: acme-boot-maven-plugin }\n")
+
+	enabled, settings, goals, warnings := config.EnabledFeatures(t.TempDir(), cfg)
+	groups, w := Discover(repo, enabled, settings, goals)
+	if len(warnings)+len(w) != 0 {
+		t.Fatalf("warnings: %v %v", warnings, w)
+	}
+	var found bool
+	for _, g := range groups {
+		for _, c := range g.Commands {
+			found = found || c.Name == "maven: spring-boot:run"
+		}
+	}
+	if !found {
+		t.Fatalf("spring-boot:run missing: %+v", groups)
 	}
 }

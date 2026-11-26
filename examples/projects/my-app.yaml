@@ -3,7 +3,8 @@
 # Example profile: copy to ~/.config/lazycmd/projects/my-app.yaml and
 # point path at one of your repos. In that repo, the deploy script offers
 # that repo's services and starts on staging. Everywhere else it keeps the
-# options from its sidecar.
+# options from its sidecar. It also shows maven.goals: this repo's Spring Boot
+# app runs through a company plugin, so spring-boot:run is detected by that.
 path: ~/repos/my-app
 
 params:
@@ -12,3 +13,8 @@ params:
 
 defaults:
   deploy: { env: staging, tag: "${env}-candidate" }
+
+maven:
+  goals:
+    - goal: spring-boot:run
+      plugin: acme-boot-maven-plugin   # the artifactId in the pom's <build><plugins>

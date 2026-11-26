@@ -37,8 +37,12 @@ var displayName = map[string]string{
 // Discover runs every enabled, detected feature and wraps its commands
 // in a "Discovered" group. A feature that errors is skipped with a
 // warning; it never aborts the others.
-func Discover(repoRoot string, enabled map[string]bool, settings map[string]map[string]string) (groups []config.Group, warnings []string) {
+func Discover(repoRoot string, enabled map[string]bool, settings map[string]map[string]string, mavenGoals []config.MavenGoal) (groups []config.Group, warnings []string) {
 	for _, f := range All {
+		if m, ok := f.(Maven); ok {
+			m.Goals = mavenGoals
+			f = m
+		}
 		if !enabled[f.Name()] {
 			continue
 		}

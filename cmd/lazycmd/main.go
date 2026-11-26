@@ -55,7 +55,8 @@ func main() {
 
 	// build assembles the full command list. With repoCommands false the
 	// repo's own .lazycmd/ commands are left out (its config.yaml still
-	// applies: it only switches features and settings, it runs nothing).
+	// applies: it only switches features and settings, it runs nothing;
+	// its maven goals are limited to plain goal names).
 	build := func(repoCommands bool) ([]config.Group, []string) {
 		dir := projectDir
 		if !repoCommands {
@@ -66,8 +67,8 @@ func main() {
 		w = append(w, discWarnings...)
 		groups = append([]config.Group{config.AdhocGroup()}, groups...)
 
-		enabled, settings, featCfgWarnings := config.EnabledFeatures(globalDir, projectDir, profileFeatures...)
-		featureGroups, featRunWarnings := features.Discover(cwd, enabled, settings)
+		enabled, settings, mavenGoals, featCfgWarnings := config.EnabledFeatures(globalDir, projectDir, profileFeatures...)
+		featureGroups, featRunWarnings := features.Discover(cwd, enabled, settings, mavenGoals)
 		groups = append(groups, featureGroups...)
 		w = append(w, featCfgWarnings...)
 		w = append(w, featRunWarnings...)

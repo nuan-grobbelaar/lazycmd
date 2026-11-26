@@ -10,7 +10,7 @@ Each script shows one or more lazycmd features. They only print, wait or ask que
 | [`panel-size`](scripts/panel-size.sh) | the Output panel's **pseudo-terminal size** and **`LC_PANEL=1`**. Resize the window while it runs |
 | [`broken-options`](scripts/broken-options.lazycmd.yaml) | how a failing **`options_cmd`** is reported, and how it clears when `depends_on` changes |
 | [`hello`](scripts/hello.sh) + [`global/hello.sh`](global/hello.sh) | a **project command shadowing a global script** of the same name: shown in yellow, and asked about before its first run in a repo. Needs the global half linked (below) |
-| [`projects/my-app.yaml`](projects/my-app.yaml) | a profile that changes `deploy`'s choices and defaults for one repo |
+| [`projects/my-app.yaml`](projects/my-app.yaml) | a profile that changes `deploy`'s choices and defaults for one repo, and teaches the maven feature a wrapper plugin with **`maven.goals`** (so `spring-boot:run` shows up in a repo whose pom lists `acme-boot-maven-plugin`) |
 
 ## Try them in this repo
 

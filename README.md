@@ -89,7 +89,7 @@ Rules:
 
 A repo's `.lazycmd/` decides what its commands are called and what they run, so the first time you open a repo that defines commands, lazycmd asks before listing them. The prompt lists each command with what it runs. `y` allows them; `n`, `esc` or `enter` leaves them hidden for now, and a yellow `N not allowed: review…` row in their place reopens the prompt. Everything else (your global scripts, profile includes, discovered features, ad-hoc) works either way.
 
-The answer is remembered per repo with a fingerprint of `commands.yaml`, every file in `.lazycmd/scripts/`, and every script a command points at (even outside `.lazycmd/`). If any of that changes, for example after a `git pull`, lazycmd asks again and says the commands changed. The repo's `config.yaml` is not covered: it only switches features and settings, and runs nothing.
+The answer is remembered per repo with a fingerprint of `commands.yaml`, every file in `.lazycmd/scripts/`, and every script a command points at (even outside `.lazycmd/`). If any of that changes, for example after a `git pull`, lazycmd asks again and says the commands changed. The repo's `config.yaml` is not covered: it only switches features and settings, and runs nothing. It can add [maven goals](#maven-goals-teaching-lazycmd-your-plugins), but only plain goal names (no shell syntax), and a repo's own pom already decides what `mvn` does.
 
 Allowed repos are kept in `~/.local/state/lazycmd/trust.json` (readable only by you). Delete an entry, or the file, to be asked again.
 
@@ -324,7 +324,7 @@ maven:
   default_profile: local
 ```
 
-Settings in use: `maven.default_profile` preselects the profile param on Maven commands. The `npm`, `vite` and `git` blocks are accepted but currently have no settings.
+Settings in use: `maven.default_profile` preselects the profile param on Maven commands, and `maven.goals` [adds goals or changes how they're detected](#maven-goals-teaching-lazycmd-your-plugins). The `npm`, `vite` and `git` blocks are accepted but currently have no settings.
 
 ## Features
 
@@ -339,8 +339,37 @@ Features only **read files** (never run `mvn`, `npm`, `git` to find out what exi
 
 Params added from your files:
 - **Maven** with `<modules>`: a `module` select (runs `-pl`) and an `also_make` checkbox (`-am`, only with a module). With `<profiles>`: a `profile` select (`-P`).
-- **Maven run goals** (`spring-boot:run`, `quarkus:dev`, `jetty:run`): module poms are read too, following `<modules>` down a few levels (only paths inside the repo). In a multi-module project a `module` select is required and lists only the modules that declare the plugin (every module when the root does, since children inherit it). There is no `also_make`, since `-am` would try to start the upstream modules too, so run `maven: install` first if the module depends on others. `spring-boot:run` adds a `spring_profiles` field (`-Dspring-boot.run.profiles=`) and `quarkus:dev` a `quarkus_profile` field (`-Dquarkus.profile=`). These are the framework's profiles, separate from Maven's `-P`. A plugin listed only under `<pluginManagement>` doesn't count.
+- **Maven run goals** (`spring-boot:run`, `quarkus:dev`, `jetty:run`): module poms are read too, following `<modules>` down a few levels (only paths inside the repo). In a multi-module project a `module` select is required and lists only the modules that declare the plugin (every module when the root does, since children inherit it). There is no `also_make`, since `-am` would try to start the upstream modules too, so run `maven: install` first if the module depends on others. `spring-boot:run` adds a `spring_profiles` field (`-Dspring-boot.run.profiles=`) and `quarkus:dev` a `quarkus_profile` field (`-Dquarkus.profile=`). These are the framework's profiles, separate from Maven's `-P`. A plugin listed only under `<pluginManagement>` doesn't count. For a plugin that comes from a parent pom or a wrapper, see [maven goals](#maven-goals-teaching-lazycmd-your-plugins).
 - **npm** with `workspaces` (array form, or `{packages: [...]}`): every script found in the root or any workspace is listed, and a `workspace` picker chooses where to run it (`.` is the root). It uses the manager's own form: `npm run X --workspace NAME`, `pnpm --filter NAME run X`, `yarn workspace NAME run X`, `bun run --filter NAME X`.
+
+### Maven goals: teaching lazycmd your plugins
+
+A built-in goal such as `spring-boot:run` shows up only when a pom lists its plugin directly under `<build><plugins>`. If yours doesn't (the plugin comes from a parent pom or a profile, or it's a company wrapper with another name), say what to look for under `maven.goals`, in `~/.config/lazycmd/config.yaml`, a [profile](#project-profiles) or the repo's `.lazycmd/config.yaml`:
+
+```yaml
+maven:
+  goals:
+    - goal: spring-boot:run            # built in: this adds a way to detect it
+      plugin: acme-boot-maven-plugin   # shows up where this artifactId is declared
+    - goal: quarkus:dev                # no plugin: always shown in a repo with a pom.xml
+    - goal: clean install              # a goal lazycmd doesn't know about
+    - goal: acme:serve
+      run: true                        # asks for a module, never -am
+      profile_param: acme_env          # a form field, passed as -Dacme.env=<value>
+      profile_prop: acme.env
+```
+
+| Field | Meaning |
+|---|---|
+| `goal` | required; what `mvn` runs. Several goals go in one string separated by spaces (`clean install`) |
+| `plugin` | the `artifactId` that makes the goal show up. Leave it out to show the goal whenever the repo has a pom.xml |
+| `run` | the goal starts an application, so it asks for a module and never uses `-am`. A built-in goal keeps its own setting when this is left out; a new goal is not a run goal |
+| `profile_param`, `profile_prop` | together: a form field (named `profile_param`) passed as `-D<profile_prop>=<value>`, like the Spring profiles field on `spring-boot:run` |
+
+- A built-in goal keeps its form fields (`spring-boot:run` still has `spring_profiles`) and gains your plugin as another way to be detected. Entries from the global file, profile and repo file are added together.
+- A goal that's already a command (`test`, or one you listed twice) isn't added again.
+- A goal made only of letters, digits and `. _ : -` is accepted, since it ends up in the `mvn` command; anything else (`; | $ ( )`, quotes) is skipped with a warning, so a repo's config can't smuggle in a shell command. Fields are limited the same way.
+- This only changes what is offered. It still needs a `pom.xml` in the repo root, and `mvn` runs whatever the pom says.
 
 ## Project profiles
 

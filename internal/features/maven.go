@@ -13,7 +13,9 @@ import (
 	"lazycmd/internal/config"
 )
 
-type Maven struct{}
+// Maven is the maven feature. Goals are the user's maven.goals from
+// config.yaml, already validated; they extend the built-in goal table.
+type Maven struct{ Goals []config.MavenGoal }
 
 func (Maven) Name() string { return "maven" }
 
@@ -30,8 +32,14 @@ var lifecyclePhases = []string{"validate", "compile", "test", "package", "verify
 // <build><plugins> (pluginManagement alone doesn't count: it only
 // configures a plugin, it doesn't apply it).
 type pluginGoal struct {
-	artifactID string
-	goal       string
+	// artifactIDs are the plugins that make the goal show up when one is
+	// declared in <build><plugins>.
+	artifactIDs []string
+	goal        string
+
+	// always offers the goal whether or not a pom declares a plugin, for
+	// a plugin that comes from a parent pom or a profile, or a wrapper.
+	always bool
 
 	// run marks a goal that starts an application (spring-boot:run and
 	// friends). Those are usually declared in one app module rather than
@@ -48,15 +56,15 @@ type pluginGoal struct {
 }
 
 var pluginGoals = []pluginGoal{
-	{artifactID: "spotless-maven-plugin", goal: "spotless:check"},
-	{artifactID: "maven-checkstyle-plugin", goal: "checkstyle:check"},
-	{artifactID: "spotbugs-maven-plugin", goal: "spotbugs:check"},
-	{artifactID: "maven-pmd-plugin", goal: "pmd:check"},
-	{artifactID: "spring-boot-maven-plugin", goal: "spring-boot:run", run: true,
+	{artifactIDs: []string{"spotless-maven-plugin"}, goal: "spotless:check"},
+	{artifactIDs: []string{"maven-checkstyle-plugin"}, goal: "checkstyle:check"},
+	{artifactIDs: []string{"spotbugs-maven-plugin"}, goal: "spotbugs:check"},
+	{artifactIDs: []string{"maven-pmd-plugin"}, goal: "pmd:check"},
+	{artifactIDs: []string{"spring-boot-maven-plugin"}, goal: "spring-boot:run", run: true,
 		appProfile: "spring_profiles", appProfileProp: "spring-boot.run.profiles"},
-	{artifactID: "quarkus-maven-plugin", goal: "quarkus:dev", run: true,
+	{artifactIDs: []string{"quarkus-maven-plugin"}, goal: "quarkus:dev", run: true,
 		appProfile: "quarkus_profile", appProfileProp: "quarkus.profile"},
-	{artifactID: "jetty-maven-plugin", goal: "jetty:run", run: true},
+	{artifactIDs: []string{"jetty-maven-plugin"}, goal: "jetty:run", run: true},
 }
 
 type pomXML struct {
@@ -71,13 +79,54 @@ type pomXML struct {
 	} `xml:"build"`
 }
 
-func (p pomXML) declares(artifactID string) bool {
+func (p pomXML) declares(artifactIDs []string) bool {
 	for _, pl := range p.Build.Plugins {
-		if strings.TrimSpace(pl.ArtifactID) == artifactID {
-			return true
+		id := strings.TrimSpace(pl.ArtifactID)
+		for _, want := range artifactIDs {
+			if id == want {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// goalTable is the built-in goals with the user's maven.goals applied. A
+// configured goal that is already in the table adds its plugin as
+// another way to detect it (or, with no plugin, turns detection off for
+// it) and may change its run and profile settings; any other goal is
+// appended. The built-in table itself is never modified.
+func (m Maven) goalTable() []pluginGoal {
+	out := make([]pluginGoal, len(pluginGoals))
+	for i, g := range pluginGoals {
+		g.artifactIDs = append([]string(nil), g.artifactIDs...)
+		out[i] = g
+	}
+	for _, c := range m.Goals {
+		idx := -1
+		for i, g := range out {
+			if g.goal == c.Goal {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			out = append(out, pluginGoal{goal: c.Goal})
+			idx = len(out) - 1
+		}
+		g := &out[idx]
+		if c.Plugin != "" {
+			g.artifactIDs = append(g.artifactIDs, c.Plugin)
+		} else {
+			g.always = true
+		}
+		if c.Run != nil {
+			g.run = *c.Run
+		}
+		if c.ProfileParam != "" {
+			g.appProfile, g.appProfileProp = c.ProfileParam, c.ProfileProp
+		}
+	}
+	return out
 }
 
 type pomCacheEntry struct {
@@ -171,7 +220,7 @@ func collectModules(repoRoot string, root pomXML) []mavenModule {
 	return out
 }
 
-func (Maven) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
+func (mv Maven) Commands(repoRoot string, settings map[string]string) ([]config.ResolvedCommand, error) {
 	pom, err := parsePomCached(filepath.Join(repoRoot, "pom.xml"))
 	if err != nil {
 		return nil, err
@@ -208,11 +257,18 @@ func (Maven) Commands(repoRoot string, settings map[string]string) ([]config.Res
 		cmds = append(cmds, mavenCommand(phase, params))
 	}
 
+	have := map[string]bool{}
+	for _, c := range cmds {
+		have[c.ID] = true
+	}
 	var modules []mavenModule
 	modulesRead := false
-	for _, g := range pluginGoals {
+	for _, g := range mv.goalTable() {
+		if have[namespacedID("maven", g.goal)] {
+			continue // e.g. a configured goal that is a lifecycle phase
+		}
 		if !g.run {
-			if pom.declares(g.artifactID) {
+			if g.always || pom.declares(g.artifactIDs) {
 				cmds = append(cmds, mavenCommand(g.goal, nil))
 			}
 			continue
@@ -265,10 +321,10 @@ func mavenCommand(goal string, params []config.Param) config.ResolvedCommand {
 // the root declares it (children inherit <build><plugins>). Running it
 // across the whole reactor would try to start each module in turn.
 func runGoalCommand(g pluginGoal, root pomXML, modules []mavenModule, profileParam *config.Param) (config.ResolvedCommand, bool) {
-	atRoot := root.declares(g.artifactID)
+	atRoot := g.always || root.declares(g.artifactIDs)
 	var where []string
 	for _, m := range modules {
-		if atRoot || m.pom.declares(g.artifactID) {
+		if atRoot || m.pom.declares(g.artifactIDs) {
 			where = append(where, m.path)
 		}
 	}

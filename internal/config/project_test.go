@@ -180,8 +180,8 @@ func TestEnabledFeaturesProfileLayer(t *testing.T) {
 	writeFile(t, filepath.Join(global, "config.yaml"), "maven:\n  default_profile: g\ndisable: [git]\n")
 	writeFile(t, filepath.Join(project, "config.yaml"), "maven:\n  other: p\n")
 
-	profile := FeaturesFile{Maven: map[string]string{"default_profile": "prof"}, Features: []string{"git"}, Disable: []string{"vite"}}
-	enabled, settings, _ := EnabledFeatures(global, project, profile)
+	profile := FeaturesFile{Maven: MavenSettings{Values: map[string]string{"default_profile": "prof"}}, Features: []string{"git"}, Disable: []string{"vite"}}
+	enabled, settings, _, _ := EnabledFeatures(global, project, profile)
 
 	if !enabled["git"] || enabled["vite"] {
 		t.Errorf("enabled = %v, want git re-enabled by the profile and vite disabled", enabled)

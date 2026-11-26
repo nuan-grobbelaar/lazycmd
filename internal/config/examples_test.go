@@ -68,6 +68,9 @@ func TestExamplesLoad(t *testing.T) {
 	if err := decodeStrict(filepath.Join(dir, "projects", "my-app.yaml"), &prof); err != nil {
 		t.Fatalf("profile: %v", err)
 	}
+	if len(prof.Maven.Goals) != 1 || prof.Maven.Goals[0].validate() != nil || prof.Maven.Goals[0].Plugin == "" {
+		t.Errorf("profile maven goals = %+v", prof.Maven.Goals)
+	}
 	groups := []Group{{Title: "Global", Commands: cmds}}
 	w := ApplyParamOverrides(groups, prof.Params)
 	w = append(w, ApplyDefaults(groups, prof.Defaults)...)
