@@ -2,7 +2,7 @@
 
 A lazygit-style TUI for running scripts. It has global and per-project commands, context-aware menus (pom, package.json, Vite config), huh forms for parameters, streaming output in a large panel, jobs that keep running while you start others, and interactive prompts handled inside the app.
 
-Design mock (main view, parameter form, prompt popup): https://claude.ai/artifact/VmyRMBGae9bZpr85j9jSnX
+These are the design notes lazycmd was built from. They are kept for the reasoning behind its choices; the [README](README.md) describes how it works today.
 
 ## Decisions so far
 
@@ -200,6 +200,9 @@ type Feature interface {
 - `creack/pty` is Unix-only. Windows would need ConPTY.
 
 ## Open questions
+
+All resolved:
+
 - ~~`mode: background`~~ Removed: every job is just a job. Any job keeps running while you run others, so there is nothing to distinguish.
-- Format for the usage log (JSON file vs SQLite).
-- ~~Name~~ Resolved: renamed from "lazycast" (clashes with an existing GitHub project) to **lazycmd**, with `lc` as the short alias. Still worth checking Homebrew and the GitHub org/module path before publishing.
+- ~~Format for the usage log~~ A JSON file (`usage.json`), with decayed counts computed on read.
+- ~~Name~~ Renamed from "lazycast" (clashes with an existing GitHub project) to **lazycmd**, with `lc` as the short alias. Published as `nuan-grobbelaar/lazycmd`, installed from the `nuan-grobbelaar/tap` Homebrew tap.

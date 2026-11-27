@@ -1020,13 +1020,7 @@ func (m Model) updateShadowConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openOrRun runs cmdSpec directly if it takes no params, or opens its
-// params form first.
-func (m Model) openOrRun(cmdSpec config.ResolvedCommand, mode runMode) (tea.Model, tea.Cmd) {
-	return m.openOrRunWith(cmdSpec, mode, nil)
-}
-
-// openOrRunWith is openOrRun with earlier answers. If they still fit the
+// openOrRunWith runs cmdSpec with earlier answers. If they still fit the
 // command they're used as is, without a form. If not (a secret to enter,
 // a param added since, an option gone) the form opens filled in with
 // them, saying why.
@@ -1703,21 +1697,6 @@ func (m Model) renderJobsList(width int) string {
 		}
 	}
 	return b.String()
-}
-
-// runningJobCount counts jobs still running other than the active one,
-// i.e. commands left going in the background.
-func (m Model) runningJobCount() int {
-	n := 0
-	for _, tj := range m.jobs {
-		if tj == m.activeJob {
-			continue
-		}
-		if status, _, _ := tj.job.Snapshot(); status == jobs.StatusRunning {
-			n++
-		}
-	}
-	return n
 }
 
 func (m Model) renderKeyBar() string {

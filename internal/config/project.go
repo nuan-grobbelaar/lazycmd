@@ -419,15 +419,6 @@ func setDefault(cmd *ResolvedCommand, param string, raw any) []string {
 	return []string{fmt.Sprintf("defaults: %s has no param %q", cmd.Name, param)}
 }
 
-func contains(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
 // defaultString renders a YAML value as the string form Param.Default
 // holds: scalars as written, bools as true/false, and a list (for a
 // multi param) joined with commas.

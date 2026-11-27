@@ -553,7 +553,7 @@ make install    # lazycmd + lc into GOBIN/GOPATH/bin
 make test       # go test ./...
 ```
 
-Design notes and open questions are in [plan.md](plan.md).
+The design notes lazycmd was built from are in [plan.md](plan.md).
 
 ## License
 

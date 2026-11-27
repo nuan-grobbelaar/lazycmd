@@ -16,7 +16,7 @@ func TestLine(t *testing.T) {
 		{"del\x7f", "del^?"},
 		{"c1\u009b31m", "c1<U+009B>31m"},
 		{"raw\x9b31m", "raw�31m"},
-		{"evil‮exe.txt", "evil<U+202E>exe.txt"},
+		{"evil\u202eexe.txt", "evil<U+202E>exe.txt"},
 	}
 	for _, c := range cases {
 		if got := Line(c.in); got != c.want {

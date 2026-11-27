@@ -315,7 +315,7 @@ func TestRealBinaryAskInPanel(t *testing.T) {
 	m = pollUntil(t, m, func(m Model) bool { return m.askPopup != nil })
 	m, _ = sendKey(t, m, runes("nuan"))
 	m = pressAndRun(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m = pollUntil(t, m, func(m Model) bool {
+	pollUntil(t, m, func(m Model) bool {
 		out, _ := m.jobs[0].job.Buffer.Snapshot()
 		return strings.Contains(out, "hello nuan")
 	})
