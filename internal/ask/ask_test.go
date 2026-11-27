@@ -2,6 +2,7 @@ package ask
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -305,4 +306,38 @@ func dialRaw(t *testing.T, sock, line string) io.Closer {
 		t.Fatal(err)
 	}
 	return conn
+}
+
+// On a real terminal a question is a form, except a long pick, which
+// goes to fzf when it's installed.
+func TestRichTerminalRouting(t *testing.T) {
+	withTTY(t, "")
+	oldRich, oldForm := richTerminal, formAsk
+	t.Cleanup(func() { richTerminal, formAsk = oldRich, oldForm })
+	richTerminal = func(io.ReadWriteCloser) bool { return true }
+	var formCalls int
+	formAsk = func(_ io.ReadWriteCloser, req Request) (Response, error) {
+		formCalls++
+		return Response{Value: "from-form"}, nil
+	}
+	dir := t.TempDir()
+	fzf := filepath.Join(dir, "fzf")
+	if err := os.WriteFile(fzf, []byte("#!/bin/sh\nsed -n 1p\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lookFzf = func() (string, error) { return fzf, nil }
+
+	if code, out, _ := runMain(t, KindAsk, []string{"Name?"}, "", true); code != ExitOK || out != "from-form\n" || formCalls != 1 {
+		t.Errorf("ask: code %d out %q forms %d", code, out, formCalls)
+	}
+	if code, out, _ := runMain(t, KindPick, []string{"Which?"}, "a\nb\n", false); code != ExitOK || out != "from-form\n" || formCalls != 2 {
+		t.Errorf("short pick: code %d out %q forms %d", code, out, formCalls)
+	}
+	var long strings.Builder
+	for i := 0; i <= fzfThreshold; i++ {
+		fmt.Fprintf(&long, "opt%d\n", i)
+	}
+	if code, out, _ := runMain(t, KindPick, []string{"Which?"}, long.String(), false); code != ExitOK || out != "opt0\n" || formCalls != 2 {
+		t.Errorf("long pick: code %d out %q forms %d (want fzf)", code, out, formCalls)
+	}
 }

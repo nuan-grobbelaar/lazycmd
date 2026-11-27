@@ -27,7 +27,8 @@ const usage = `usage:
 
 Prints the answer (pick --multi: one choice per line). Exits 1 if cancelled.
 Inside lazycmd this opens a popup; elsewhere it asks on the terminal
-(pick uses fzf when it's installed).`
+with a small inline form (a pick of more than 200 options uses fzf when
+it's installed; TERM=dumb gets a plain prompt).`
 
 // Swappable for tests.
 var (
@@ -148,17 +149,27 @@ func readOptions(r io.Reader) ([]Option, error) {
 }
 
 // local answers req on the terminal, for scripts run outside lazycmd.
+// On a real terminal that's a one-field form (askForm); a pick of more
+// than fzfThreshold options uses fzf when it's installed. Where the
+// terminal can't draw a form (TERM=dumb, no /dev/tty) it's a plain
+// prompt, or fzf for a pick.
 func local(req Request) (Response, error) {
+	tty, ttyErr := openTTY()
+	if ttyErr == nil {
+		defer tty.Close()
+	}
+	rich := ttyErr == nil && richTerminal(tty)
 	if req.Kind == KindPick {
-		if fzf, err := lookFzf(); err == nil {
+		if fzf, err := lookFzf(); err == nil && (!rich || len(req.Options) > fzfThreshold) {
 			return pickFzf(fzf, req)
 		}
 	}
-	tty, err := openTTY()
-	if err != nil {
-		return Response{}, fmt.Errorf("no terminal to ask on: %v", err)
+	if ttyErr != nil {
+		return Response{}, fmt.Errorf("no terminal to ask on: %v", ttyErr)
 	}
-	defer tty.Close()
+	if rich {
+		return formAsk(tty, req)
+	}
 	if req.Kind == KindPick {
 		return pickMenu(tty, req)
 	}
