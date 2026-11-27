@@ -18,6 +18,7 @@ import (
 	"lazycmd/internal/config"
 	"lazycmd/internal/jobs"
 	"lazycmd/internal/last"
+	"lazycmd/internal/safefile"
 	"lazycmd/internal/safetext"
 	"lazycmd/internal/trust"
 	"lazycmd/internal/usage"
@@ -72,6 +73,11 @@ type Model struct {
 	// flash is a one-line message in the key bar, cleared by the next
 	// key: what . or R couldn't do.
 	flash string
+
+	// trustCheck, when set, re-checks right before a repo command runs
+	// that the repo's commands are still the ones allowed. It returns nil
+	// when they are, else a freshly loaded list (with them held back).
+	trustCheck func() *Loaded
 
 	viewport    viewport.Model
 	followTail  bool
@@ -166,6 +172,12 @@ type PendingTrust struct {
 	Commands    []config.ResolvedCommand
 	Fingerprint string
 	FullGroups  []config.Group
+}
+
+// WithTrustCheck sets the check run right before each repo command.
+func (m Model) WithTrustCheck(check func() *Loaded) Model {
+	m.trustCheck = check
+	return m
 }
 
 // WithPendingTrust holds the repo's commands back behind the trust
@@ -595,6 +607,16 @@ func (m Model) run(cmdSpec config.ResolvedCommand, mode runMode, values map[stri
 
 // launch starts cmdSpec now, past every check.
 func (m Model) launch(cmdSpec config.ResolvedCommand, mode runMode, values map[string]string) (tea.Model, tea.Cmd) {
+	// The repo's commands were allowed as they were when last loaded;
+	// a script edited since (a git pull a moment ago) must not run
+	// before the reload notices. So check again, right before it runs.
+	if cmdSpec.FromRepo && m.trustCheck != nil {
+		if fresh := m.trustCheck(); fresh != nil {
+			m = m.applyLoaded(fresh)
+			m.flash = "not run: the repo's commands changed since you allowed them. Review them first"
+			return m, nil
+		}
+	}
 	if mode == runTerminal {
 		return m.runInTerminal(cmdSpec, values)
 	}
@@ -1361,7 +1383,7 @@ func spread(left, right string, width int) string {
 // git (nothing executes just because lazycmd opened a repo). Empty
 // when the directory isn't a checkout or HEAD is detached.
 func gitBranch(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, ".git", "HEAD"))
+	data, err := safefile.ReadFile(filepath.Join(root, ".git", "HEAD"))
 	if err != nil {
 		return ""
 	}

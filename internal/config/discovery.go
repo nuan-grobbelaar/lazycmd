@@ -38,6 +38,11 @@ type ResolvedCommand struct {
 	// current answers. Needed where Run builds its arguments
 	// conditionally, which plain $LC_ substitution can't show.
 	Preview func(values map[string]string) string
+
+	// FromRepo marks a command from the repo's own .lazycmd/ (its
+	// scripts/ or commands.yaml): one that runs only once the repo's
+	// commands are allowed. Set by discovery, never decoded from YAML.
+	FromRepo bool
 }
 
 type Group struct {
@@ -71,6 +76,9 @@ func DiscoverWith(globalDir, projectDir string, extra []ResolvedCommand) (groups
 		fileCmds, fileWarnings := loadCommandsFile(projectDir)
 		warnings = append(warnings, fileWarnings...)
 		projectCmds = append(projectCmds, fileCmds...)
+		for i := range projectCmds {
+			projectCmds[i].FromRepo = true
+		}
 	}
 	have := make(map[string]bool, len(projectCmds))
 	byScript := make(map[string]int, len(projectCmds))
@@ -182,6 +190,12 @@ func scriptCommand(dir, file, scope string) (ResolvedCommand, error) {
 		var spec Command
 		if err := decodeStrict(sidecarPath, &spec); err != nil {
 			return cmd, fmt.Errorf("%s: %v", sidecarPath, err)
+		}
+		// The sidecar describes the script beside it. A run: or script:
+		// of its own would be shown in the preview and confirm while the
+		// script is what actually runs.
+		if spec.Run != "" || spec.Script != "" {
+			return cmd, fmt.Errorf("%s: a sidecar beside a script can't set run: or script: (it describes %s)", sidecarPath, file)
 		}
 		applySpec(&cmd, spec)
 		if err := validateCommand(cmd); err != nil {

@@ -135,3 +135,15 @@ func (a *app) profile() string {
 	defer a.mu.Unlock()
 	return a.profileName
 }
+
+// trustCheck is run right before a repo command starts: nil while the
+// repo's commands are still the ones allowed, else a freshly loaded
+// list, in which they are held back again.
+func (a *app) trustCheck() *ui.Loaded {
+	repoCmds, _ := config.ProjectCommands(a.projectDir)
+	if len(repoCmds) > 0 && trust.Load(a.stateDir).Check(a.cwd, trust.Fingerprint(a.projectDir, repoCmds)) == trust.Allowed {
+		return nil
+	}
+	l := a.load()
+	return &l
+}

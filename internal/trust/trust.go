@@ -21,6 +21,7 @@ import (
 	"sort"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 const fileName = "trust.json"
@@ -111,13 +112,13 @@ func Fingerprint(projectDir string, cmds []config.ResolvedCommand) string {
 	h := sha256.New()
 	add := func(label, path string) {
 		fmt.Fprintf(h, "%s\x00%s\x00", label, path)
-		f, err := os.Open(path)
+		f, err := safefile.Open(path) // a FIFO or /dev/zero must not hang this
 		if err != nil {
 			fmt.Fprintf(h, "unreadable\x00")
 			return
 		}
 		defer f.Close()
-		n, _ := io.Copy(h, f)
+		n, _ := io.Copy(h, safefile.Reader(f))
 		fmt.Fprintf(h, "\x00%d\x00", n)
 	}
 

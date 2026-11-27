@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 type Feature interface {
@@ -115,7 +116,7 @@ func WatchPaths(repoRoot string) []string {
 	}
 	for dir := range dirs {
 		abs := filepath.Join(repoRoot, filepath.FromSlash(dir))
-		if data, err := os.ReadFile(filepath.Join(abs, "package.json")); err == nil {
+		if data, err := safefile.ReadFile(filepath.Join(abs, "package.json")); err == nil {
 			var pkg packageJSON
 			if json.Unmarshal(data, &pkg) == nil {
 				for _, ws := range findWorkspaces(abs, pkg.workspacePatterns()) {

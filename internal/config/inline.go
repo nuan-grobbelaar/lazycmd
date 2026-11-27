@@ -66,14 +66,20 @@ func InlineCommand(globalDir, repoRoot, path string, profile *Profile) (cmd Reso
 
 // SetValues presets params from name=value arguments, the way a profile's
 // defaults: do: the form starts with them, and without a form (no
-// terminal) they are the answers. A name the command doesn't have, or a
-// value that isn't one of a select's options, is an error.
+// terminal) they are the answers. A name the command doesn't have, a
+// value that isn't one of a select's options, or a secret, is an error.
 func SetValues(cmd *ResolvedCommand, assignments []string) error {
 	cmd.Params = append([]Param(nil), cmd.Params...)
 	for _, a := range assignments {
 		name, value, ok := strings.Cut(a, "=")
 		if !ok || name == "" {
 			return fmt.Errorf("%q: expected name=value", a)
+		}
+		for _, p := range cmd.Params {
+			if p.Name == name && p.Type == ParamSecret {
+				// The command line shows in ps and in shell history.
+				return fmt.Errorf("%s is a secret, so it can't be given as name=value (that shows in ps and your shell history); set LC_%s in the environment instead", name, strings.ToUpper(name))
+			}
 		}
 		if w := setDefault(cmd, name, value); len(w) > 0 {
 			return fmt.Errorf("%s", strings.TrimPrefix(w[0], "defaults: "))

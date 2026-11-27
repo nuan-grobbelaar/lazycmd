@@ -3,13 +3,13 @@ package features
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 type Npm struct{}
@@ -72,7 +72,7 @@ func findWorkspaces(repoRoot string, patterns []string) []workspace {
 			if err != nil || seen[rel] {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+			data, err := safefile.ReadFile(filepath.Join(dir, "package.json"))
 			if err != nil {
 				continue
 			}
@@ -119,7 +119,7 @@ func npmProjects(repoRoot string) []string {
 	member := map[string]bool{}
 	for _, d := range dirs {
 		abs := filepath.Join(repoRoot, filepath.FromSlash(d))
-		data, err := os.ReadFile(filepath.Join(abs, "package.json"))
+		data, err := safefile.ReadFile(filepath.Join(abs, "package.json"))
 		if err != nil {
 			continue
 		}
@@ -143,7 +143,7 @@ func npmProjects(repoRoot string) []string {
 // npmIn builds the commands for the package in repoRoot. top is the
 // repo's root, where the search for a lockfile ends.
 func npmIn(repoRoot, top string) ([]config.ResolvedCommand, error) {
-	data, err := os.ReadFile(filepath.Join(repoRoot, "package.json"))
+	data, err := safefile.ReadFile(filepath.Join(repoRoot, "package.json"))
 	if err != nil {
 		return nil, err
 	}

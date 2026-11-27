@@ -3,7 +3,9 @@ package trust
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"lazycmd/internal/config"
 )
@@ -120,5 +122,29 @@ func TestCorruptStoreAsksAgain(t *testing.T) {
 	write(t, filepath.Join(stateDir, fileName), "{not json", 0o600)
 	if got := Load(stateDir).Check(t.TempDir(), "x"); got != Unknown {
 		t.Errorf("corrupt store = %v, want Unknown", got)
+	}
+}
+
+// A FIFO or /dev/zero in .lazycmd/scripts must not hang the fingerprint
+// (it runs at startup, before anything is allowed).
+func TestFingerprintDoesNotHang(t *testing.T) {
+	dir := t.TempDir()
+	scripts := filepath.Join(dir, "scripts")
+	os.MkdirAll(scripts, 0o755)
+	if err := syscall.Mkfifo(filepath.Join(scripts, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(scripts, "b")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string)
+	go func() { done <- Fingerprint(dir, nil) }()
+	select {
+	case fp := <-done:
+		if fp == "" {
+			t.Error("empty fingerprint")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Fingerprint hung")
 	}
 }

@@ -2,7 +2,6 @@ package features
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 // Python is the Python feature: it reads pyproject.toml (never runs
@@ -96,7 +96,7 @@ func pythonIn(repoRoot, top string, settings map[string]string) ([]config.Resolv
 	}
 	prefix := pythonRunners[runner]
 
-	data, err := os.ReadFile(filepath.Join(repoRoot, "pyproject.toml"))
+	data, err := safefile.ReadFile(filepath.Join(repoRoot, "pyproject.toml"))
 	if err != nil {
 		return nil, err
 	}

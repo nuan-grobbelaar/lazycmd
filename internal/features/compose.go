@@ -2,7 +2,6 @@ package features
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -11,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 // Compose is the docker compose feature. Like the others it only reads
@@ -97,7 +97,7 @@ func (Compose) Commands(repoRoot string, settings map[string]string) ([]config.R
 // composeIn builds the commands for the compose file in dir.
 func composeIn(dir, cli string) ([]config.ResolvedCommand, error) {
 	file := composeFileIn(dir)
-	data, err := os.ReadFile(filepath.Join(dir, file))
+	data, err := safefile.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		return nil, err
 	}

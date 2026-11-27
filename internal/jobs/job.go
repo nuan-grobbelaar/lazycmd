@@ -98,9 +98,11 @@ func StartSized(id string, resolved config.ResolvedCommand, values map[string]st
 		cmd:       execCmd,
 	}
 
+	// A log holds everything the command printed, tokens included, so
+	// only the user can read it.
 	logPath := filepath.Join(stateDir, "logs", logFileName(id))
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err == nil {
-		if f, err := os.Create(logPath); err == nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err == nil {
+		if f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600); err == nil {
 			j.logFile = f
 		}
 	}
@@ -151,8 +153,33 @@ func BuildCmd(resolved config.ResolvedCommand, values map[string]string) (*exec.
 	default:
 		return nil, fmt.Errorf("command %q has neither a script nor a run body", resolved.Name)
 	}
-	cmd.Env = append(os.Environ(), paramEnv(values)...)
+	cmd.Env = append(os.Environ(), paramEnv(keepEnvSecrets(resolved, values))...)
 	return cmd, nil
+}
+
+// keepEnvSecrets drops each secret left empty whose LC_<NAME> is already
+// set in lazycmd's own environment, so the command gets that value
+// rather than an empty one. It's how a secret reaches a command without
+// being typed: `LC_TOKEN=... lc deploy.sh` (in CI, say), since a secret
+// can't be given as an argument.
+func keepEnvSecrets(resolved config.ResolvedCommand, values map[string]string) map[string]string {
+	var out map[string]string
+	for _, p := range resolved.Params {
+		if p.Type != config.ParamSecret || values[p.Name] != "" || os.Getenv("LC_"+strings.ToUpper(p.Name)) == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(values))
+			for k, v := range values {
+				out[k] = v
+			}
+		}
+		delete(out, p.Name)
+	}
+	if out == nil {
+		return values
+	}
+	return out
 }
 
 func paramEnv(values map[string]string) []string {

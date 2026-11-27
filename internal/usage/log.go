@@ -46,7 +46,7 @@ func Load(stateDir string) *Log {
 // Save writes the log to stateDir, via a temp file and rename so a
 // crash mid-write can't corrupt it.
 func (l *Log) Save(stateDir string) error {
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
 	data, err := json.Marshal(l)
@@ -55,7 +55,10 @@ func (l *Log) Save(stateDir string) error {
 	}
 	path := filepath.Join(stateDir, fileName)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil { // WriteFile keeps an existing file's mode
 		return err
 	}
 	return os.Rename(tmp, path)

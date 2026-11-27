@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lazycmd/internal/config"
+	"lazycmd/internal/safefile"
 )
 
 // Maven is the maven feature. Goals are the user's maven.goals from
@@ -156,7 +157,7 @@ func parsePomCached(path string) (pomXML, error) {
 		return e.parsed, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := safefile.ReadFile(path)
 	if err != nil {
 		return pomXML{}, err
 	}

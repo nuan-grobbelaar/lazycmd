@@ -48,6 +48,9 @@ func main() {
 		os.Exit(runInline(globalDir, cwd, os.Args[1], os.Args[2:], term.IsTerminal(os.Stdin.Fd()), os.Stderr))
 	}
 
+	// Private state folder, old logs pruned.
+	jobs.PrepareState(stateDir, jobs.KeepLogs)
+
 	// Panel jobs can't ask the terminal about its colours, so lazycmd
 	// answers for it (see package jobs).
 	jobs.SetDarkBackground(lipgloss.HasDarkBackground())
@@ -64,6 +67,7 @@ func main() {
 	}
 	// The command list is rebuilt when the files it was built from change.
 	model = model.WithReload(ui.FileReloader{Watcher: watch.New(a.watchPaths), Load: a.load})
+	model = model.WithTrustCheck(a.trustCheck)
 	// Questions from jobs (lazycmd ask/pick) arrive on this socket. If it
 	// can't be set up, scripts fall back to asking on a terminal.
 	srv, err := ask.NewServer(stateDir)

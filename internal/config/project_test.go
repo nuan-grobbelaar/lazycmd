@@ -28,8 +28,12 @@ func TestLoadProfileMatchesByPathSubfolderAndName(t *testing.T) {
 	writeFile(t, filepath.Join(pdir, "vandag.yaml"), "defaults: {}\n")  // no path, name == repo folder
 
 	p, w := LoadProfile(global, repo)
-	if len(w) != 0 || p == nil || filepath.Base(p.Source) != "vandag.yaml" {
+	if p == nil || filepath.Base(p.Source) != "vandag.yaml" {
 		t.Fatalf("by name: profile = %+v, warnings = %v", p, w)
+	}
+	// A match by name alone still works, but says to add a path.
+	if len(w) != 1 || !strings.Contains(w[0], "only because the folder is called") || !strings.Contains(w[0], "add path: ") {
+		t.Errorf("by name: want one warning asking for a path, got %v", w)
 	}
 
 	writeFile(t, filepath.Join(pdir, "a-path.yaml"), "path: "+repo+"\n")

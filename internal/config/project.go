@@ -94,6 +94,10 @@ func LoadProfile(globalDir, repoRoot string) (*Profile, []string) {
 		}
 		if len(paths) == 0 && strings.TrimSuffix(e.Name(), ext) == filepath.Base(root) {
 			matched = true
+			// Any folder of that name matches, a stranger's clone in
+			// ~/Downloads included, and gets this profile's scripts and
+			// defaults. Say so until it has a path.
+			warnings = append(warnings, fmt.Sprintf("%s applies here only because the folder is called %q; add path: %s to it, so it can't apply to another folder with that name", path, filepath.Base(root), tildeHome(root)))
 		}
 		if matched {
 			return &Profile{File: f, Source: path}, warnings
@@ -106,6 +110,16 @@ func LoadProfile(globalDir, repoRoot string) (*Profile, []string) {
 func covers(dir, root string) bool {
 	rel, err := filepath.Rel(dir, root)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// tildeHome writes p with the home folder as ~, for messages.
+func tildeHome(p string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, p); err == nil && filepath.IsLocal(rel) {
+			return "~/" + filepath.ToSlash(rel)
+		}
+	}
+	return p
 }
 
 // expandPath resolves ~ and, for relative paths, anchors them at base.

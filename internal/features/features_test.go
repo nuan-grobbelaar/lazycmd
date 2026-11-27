@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1294,5 +1295,33 @@ func TestWatchPathsCoverTheFilesFeaturesRead(t *testing.T) {
 		if !got[want] {
 			t.Errorf("%s isn't watched; have %v", want, got)
 		}
+	}
+}
+
+// Opening a repo must not hang on a package.json (or any file features
+// read) that is a symlink to /dev/zero or a FIFO.
+func TestDiscoverDoesNotHangOnSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("/dev/zero", filepath.Join(dir, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", filepath.Join(dir, "pyproject.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "pom.xml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "compose.yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		Discover(dir, map[string]bool{"npm": true, "python": true, "maven": true, "compose": true, "vite": true}, nil, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Discover hung on a special file")
 	}
 }

@@ -21,7 +21,7 @@ cd ~/some/repo && lc
 lc scripts/deploy.sh   # or run one script right here: its form, then the script
 ```
 
-Opening lazycmd in a repo never executes anything from that repo's config. Commands only run after you select them, and a repo's own commands are only listed once you [allow them](#allowing-a-repos-commands). Text from the repo (command names, descriptions, the branch name in `.git/HEAD`, script names in `package.json`) has control characters made visible before it is drawn (ESC shows as `^[`), so a repo can't send escape sequences to your terminal.
+Opening lazycmd in a repo never executes anything from that repo's config. Commands only run after you select them, and a repo's own commands are only listed once you [allow them](#allowing-a-repos-commands). Text from the repo (command names, descriptions, the branch name in `.git/HEAD`, script names in `package.json`) has control characters made visible before it is drawn (ESC shows as `^[`), so a repo can't send escape sequences to your terminal. Files from the repo are read only if they're regular files and at most 4 MB, so a `package.json` that is a link to `/dev/zero`, or a named pipe, can't hang lazycmd.
 
 - [Screen and keys](#screen-and-keys)
 - [Where commands come from](#where-commands-come-from)
@@ -125,7 +125,7 @@ Rules:
 
 A repo's `.lazycmd/` decides what its commands are called and what they run, so the first time you open a repo that defines commands, lazycmd asks before listing them. The prompt lists each command with what it runs. `y` allows them; `n`, `esc` or `enter` leaves them hidden for now, and a yellow `N not allowed: review…` row in their place reopens the prompt. Everything else (your global scripts, profile includes, discovered features, ad-hoc) works either way.
 
-The answer is remembered per repo with a fingerprint of `commands.yaml`, every file in `.lazycmd/scripts/`, and every script a command points at (even outside `.lazycmd/`). If any of that changes, for example after a `git pull`, lazycmd asks again and says the commands changed. The repo's `config.yaml` is not covered: it only switches features and settings, and runs nothing. It can add [maven goals](#maven-goals-teaching-lazycmd-your-plugins), but only plain goal names (no shell syntax), and a repo's own pom already decides what `mvn` does.
+The answer is remembered per repo with a fingerprint of `commands.yaml`, every file in `.lazycmd/scripts/`, and every script a command points at (even outside `.lazycmd/`). If any of that changes, for example after a `git pull`, lazycmd asks again and says the commands changed. This is checked again right before a repo command runs, so a script changed a moment ago doesn't run before the reload notices: it's held back and you review it first. Files a script itself reads or sources aren't covered, the same as with direnv. The repo's `config.yaml` is not covered: it only switches features and settings, and runs nothing. It can add [maven goals](#maven-goals-teaching-lazycmd-your-plugins), but only plain goal names (no shell syntax), and a repo's own pom already decides what `mvn` does.
 
 Allowed repos are kept in `~/.local/state/lazycmd/trust.json` (readable only by you). Delete an entry, or the file, to be asked again.
 
@@ -171,7 +171,7 @@ One shape is used everywhere: sidecars, `commands.yaml` entries and files a prof
 | `terminal` | bool | `enter` runs it with the real terminal, like `t`, for interactive programs (fzf, vim, psql). Shown as `⧉` in the list |
 | `confirm` | bool or string | ask before running: `true` for "Run <name>?", or the question with `{param}` placeholders. See [confirm](#asking-before-running-confirm) |
 
-In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it. `script:` paths are relative to the file that names them; `~` and absolute paths work too.
+In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it, so a sidecar beside a script can't set `run:` or `script:` (the preview would show one thing while the script runs). `script:` paths are relative to the file that names them; `~` and absolute paths work too.
 
 ```yaml
 desc: Deploy a service
@@ -203,7 +203,7 @@ Unknown keys are errors, so a typo is loud instead of silently ignored.
 | `select` | pick one |
 | `multi` | pick several (values arrive comma-joined) |
 | `bool` | yes/no (arrives as `true` or `false`) |
-| `secret` | input with masked echo; reaches the command only as `LC_NAME`, never in `args` |
+| `secret` | input with masked echo; reaches the command only as `LC_NAME`, never in `args`. Left empty, it keeps an `LC_NAME` already set in lazycmd's environment |
 | `text` | multi-line input |
 
 `options_cmd` runs in the repo root with a 5 second timeout, with every param answered so far available as `LC_<NAME>`. Results are cached per command and answers, so a dependent select re-runs only when what it depends on changes. It only runs after you select the command, never on startup. Declare a param after the ones it `depends_on`.
@@ -327,7 +327,7 @@ lc ./build.sh --fast                    # no sidecar: runs at once, args passed 
 
 `lc <script>` runs one script in the terminal you're in, without opening the TUI. The argument is a path to an executable file. `ask` and `pick` are taken (see [lazycmd ask / pick](#asking-questions-from-a-script-lazycmd-ask--pick)), so run a script with one of those names as `./ask`.
 
-- **With a sidecar**, the script's form shows below your prompt: the same fields, keys and checks as in the TUI, including `options_cmd`, followed by its `confirm` question if it has one. The sidecar is the `<name>.lazycmd.yaml` beside the script, or an entry in the matching [profile's `sidecars:`](#project-profiles), which wins. The profile's `params:`, `defaults:` and `confirm:` for it apply too. Extra arguments are `name=value` presets for the form; an unknown name, or a value that isn't one of a select's options, is an error.
+- **With a sidecar**, the script's form shows below your prompt: the same fields, keys and checks as in the TUI, including `options_cmd`, followed by its `confirm` question if it has one. The sidecar is the `<name>.lazycmd.yaml` beside the script, or an entry in the matching [profile's `sidecars:`](#project-profiles), which wins. The profile's `params:`, `defaults:` and `confirm:` for it apply too. Extra arguments are `name=value` presets for the form; an unknown name, or a value that isn't one of a select's options, is an error. A `secret` can't be given this way (it would show in `ps` and your shell history): set it in the environment, `LC_TOKEN=... lc deploy.sh`, and leave the field empty.
 - **Without a sidecar** nothing is asked. The script runs straight away with your arguments as they are.
 - Either way, lazycmd then **replaces itself with the script** (`exec`). The output stays in your scrollback, Ctrl-C goes to the script, and the exit status is the script's own. `esc` or Ctrl-C in the form cancels with status 130. After the form, one line such as `deploy  $ scripts/deploy.sh prod` is left above the script's output, so you can see what ran.
 - Inside the script, [`lazycmd ask` / `lazycmd pick`](#asking-questions-from-a-script-lazycmd-ask--pick) ask on this terminal, as they do outside lazycmd.
@@ -501,7 +501,7 @@ maven:
 | `params` | this repo's options and default for a `select` / `multi` param |
 | `features`, `disable`, `maven`, … | exactly as in [config.yaml](#configyaml-features-and-settings) |
 
-**Matching.** With no `path`, the file name (without `.yaml`) must equal the repo folder's name, so `vandag.yaml` matches `~/repos/vandag`. If several profiles match, the first by file name wins. The header shows `profile <name>` when one matched.
+**Matching.** With no `path`, the file name (without `.yaml`) must equal the repo folder's name, so `vandag.yaml` matches `~/repos/vandag`. That also matches any other folder of that name, a stranger's clone in `~/Downloads` included, which would get your profile's scripts and defaults; so such a match shows a warning until you add `path:`. If several profiles match, the first by file name wins. The header shows `profile <name>` when one matched.
 
 **include.** Each entry is one of: a script (its `<name>.lazycmd.yaml` beside it is picked up); a `<name>.lazycmd.yaml` sidecar (its script sits beside it, or the sidecar sets `run:` / `script:`); a `commands.yaml`-shaped file (any other `.yaml`/`.yml`); or a folder of scripts. A missing or invalid entry is a warning and the rest still load. The repo's own `.lazycmd/` wins over an included command with the same name, and an included command shadows a global one.
 
@@ -526,10 +526,10 @@ maven:
 
 ## State: logs and usage
 
-- `~/.local/state/lazycmd/logs/<job>.log` holds each run's output (as the program wrote it).
+- `~/.local/state/lazycmd/logs/<job>.log` holds each run's output (as the program wrote it). The state folder and its logs are readable only by you (folders `0700`, files `0600`), since output can hold tokens; lazycmd fixes the modes of folders an older version created. The newest 200 logs are kept, older ones are deleted when lazycmd starts.
 - `~/.local/state/lazycmd/trust.json` holds the repos whose commands you allowed, see [above](#allowing-a-repos-commands).
 - `~/.local/state/lazycmd/last.json` (readable only by you) holds, per repo, the answers you last gave each command and which command ran last, for `.` and `R`. Secret params are never saved. Delete it to forget them.
-- `~/.local/state/lazycmd/usage.json` holds decayed run counts per repo and command id. It only orders the Global group; delete it to reset. A missing or corrupt file just starts fresh.
+- `~/.local/state/lazycmd/usage.json` (readable only by you) holds decayed run counts per repo and command id. It only orders the Global group; delete it to reset. A missing or corrupt file just starts fresh.
 
 ## Editor support: JSON Schemas
 

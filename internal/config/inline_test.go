@@ -101,3 +101,27 @@ func TestInlineExamples(t *testing.T) {
 		t.Errorf("release: %+v %v %v", cmd, has, err)
 	}
 }
+
+func TestSetValuesRefusesSecrets(t *testing.T) {
+	cmd := ResolvedCommand{Name: "d", Params: []Param{{Name: "token", Type: ParamSecret}}}
+	err := SetValues(&cmd, []string{"token=abc"})
+	if err == nil || !strings.Contains(err.Error(), "LC_TOKEN") {
+		t.Errorf("want a refusal that points at LC_TOKEN, got %v", err)
+	}
+}
+
+// A sidecar beside a script describes it: its own run: would show in the
+// preview while the script is what runs.
+func TestSidecarBesideScriptCantSetRun(t *testing.T) {
+	dir := t.TempDir()
+	exe(t, filepath.Join(dir, "deploy.sh"), "#!/bin/sh\n")
+	for _, body := range []string{"run: echo harmless\n", "script: other.sh\n"} {
+		writeFile(t, filepath.Join(dir, "deploy.lazycmd.yaml"), body)
+		if _, err := scriptCommand(dir, "deploy.sh", "project"); err == nil || !strings.Contains(err.Error(), "can't set run: or script:") {
+			t.Errorf("%q: got %v", body, err)
+		}
+		if _, _, err := InlineCommand(t.TempDir(), dir, filepath.Join(dir, "deploy.sh"), nil); err == nil {
+			t.Errorf("%q: lc should refuse it too", body)
+		}
+	}
+}
