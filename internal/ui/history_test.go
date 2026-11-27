@@ -20,17 +20,22 @@ func runPast(t *testing.T, stateDir string, cmd config.ResolvedCommand) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitJob(t, j)
+}
+
+// waitJob waits for j to finish (by then it's in the history too).
+func waitJob(t *testing.T, j *jobs.Job) {
+	t.Helper()
 	deadline := time.Now().Add(4 * time.Second)
 	for {
 		if status, _, _ := j.Snapshot(); status != jobs.StatusRunning {
-			break
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("job never finished")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond) // history is written right after the status changes
 }
 
 func TestHistoryShowViewRerunHide(t *testing.T) {
@@ -90,8 +95,13 @@ func TestHistoryRerunOfGoneCommand(t *testing.T) {
 func TestJobsListScrollsToCursor(t *testing.T) {
 	m := New(nil, nil, t.TempDir(), t.TempDir())
 	m.focus = focusJobs
+	state := t.TempDir()
 	for i := 0; i < 8; i++ {
-		j, _ := jobs.Start("j", config.ResolvedCommand{Name: string(rune('a' + i)), Run: "true"}, nil, t.TempDir())
+		j, err := jobs.Start("j", config.ResolvedCommand{Name: string(rune('a' + i)), Run: "true"}, nil, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitJob(t, j) // or it's still writing its log when the temp folder goes
 		m.jobs = append(m.jobs, &trackedJob{job: j, cmd: config.ResolvedCommand{Name: "job" + string(rune('a'+i))}})
 	}
 	m.jobsCursor = 7

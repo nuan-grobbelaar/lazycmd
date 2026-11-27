@@ -238,25 +238,26 @@ func (j *Job) readLoop() {
 
 	waitErr := j.cmd.Wait()
 
-	j.mu.Lock()
-	j.endedAt = time.Now()
+	ended := time.Now()
+	status, exitCode := StatusSucceeded, 0
 	if waitErr != nil {
-		j.status = StatusFailed
+		status, exitCode = StatusFailed, -1
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
-			j.exitCode = exitErr.ExitCode()
-		} else {
-			j.exitCode = -1
+			exitCode = exitErr.ExitCode()
 		}
-	} else {
-		j.status = StatusSucceeded
 	}
-	run := j.history
-	run.Status, run.ExitCode, run.DurationMS = j.status.String(), j.exitCode, j.endedAt.Sub(j.startedAt).Milliseconds()
-	j.mu.Unlock()
-
-	if run.Log != "" {
+	// Recorded before the job shows as finished, so whoever sees it
+	// finished also finds it in the history.
+	if j.history.Log != "" {
+		run := j.history
+		run.Status, run.ExitCode, run.DurationMS = status.String(), exitCode, ended.Sub(j.startedAt).Milliseconds()
 		appendHistory(j.stateDir, run) // best effort
 	}
+
+	j.mu.Lock()
+	j.endedAt, j.status, j.exitCode = ended, status, exitCode
+	j.mu.Unlock()
+
 	j.Buffer.Touch()
 }
 
