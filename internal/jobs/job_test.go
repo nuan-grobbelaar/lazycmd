@@ -60,10 +60,10 @@ func TestBuildCmdInjectsParamsAsEnvVars(t *testing.T) {
 }
 
 func TestStartRunsToSuccess(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "ok.sh"), "#!/bin/sh\necho hello\n")
 
-	j, err := Start("test-ok", config.ResolvedCommand{Name: "ok", ScriptPath: filepath.Join(root, "ok.sh")}, nil, t.TempDir())
+	j, err := Start("test-ok", config.ResolvedCommand{Name: "ok", ScriptPath: filepath.Join(root, "ok.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +83,10 @@ func TestStartRunsToSuccess(t *testing.T) {
 }
 
 func TestStartRunsToFailureWithExitCode(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "bad.sh"), "#!/bin/sh\nexit 7\n")
 
-	j, err := Start("test-bad", config.ResolvedCommand{Name: "bad", ScriptPath: filepath.Join(root, "bad.sh")}, nil, t.TempDir())
+	j, err := Start("test-bad", config.ResolvedCommand{Name: "bad", ScriptPath: filepath.Join(root, "bad.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +99,9 @@ func TestStartRunsToFailureWithExitCode(t *testing.T) {
 }
 
 func TestStartTeesOutputToLogFile(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "ok.sh"), "#!/bin/sh\necho logged\n")
-	stateDir := t.TempDir()
+	stateDir := testDir(t)
 
 	j, err := Start("tee-test", config.ResolvedCommand{Name: "ok", ScriptPath: filepath.Join(root, "ok.sh")}, nil, stateDir)
 	if err != nil {
@@ -122,10 +122,10 @@ func TestStartTeesOutputToLogFile(t *testing.T) {
 }
 
 func TestWriteSendsInputToTheProcess(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "echo.sh"), "#!/bin/sh\nread line\necho \"got: $line\"\n")
 
-	j, err := Start("write-test", config.ResolvedCommand{Name: "echo", ScriptPath: filepath.Join(root, "echo.sh")}, nil, t.TempDir())
+	j, err := Start("write-test", config.ResolvedCommand{Name: "echo", ScriptPath: filepath.Join(root, "echo.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,10 +143,10 @@ func TestWriteSendsInputToTheProcess(t *testing.T) {
 }
 
 func TestEchoEnabledReflectsSttyEcho(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "secret.sh"), "#!/bin/sh\nstty -echo\nread pw\nstty echo\n")
 
-	j, err := Start("echo-test", config.ResolvedCommand{Name: "secret", ScriptPath: filepath.Join(root, "secret.sh")}, nil, t.TempDir())
+	j, err := Start("echo-test", config.ResolvedCommand{Name: "secret", ScriptPath: filepath.Join(root, "secret.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,10 +163,10 @@ func TestEchoEnabledReflectsSttyEcho(t *testing.T) {
 }
 
 func TestKillTerminatesARunningJob(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "slow.sh"), "#!/bin/sh\nsleep 30\n")
 
-	j, err := Start("kill-test", config.ResolvedCommand{Name: "slow", ScriptPath: filepath.Join(root, "slow.sh")}, nil, t.TempDir())
+	j, err := Start("kill-test", config.ResolvedCommand{Name: "slow", ScriptPath: filepath.Join(root, "slow.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,10 +175,10 @@ func TestKillTerminatesARunningJob(t *testing.T) {
 }
 
 func TestWriteAfterCloseIsSafeNotAPanic(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "ok.sh"), "#!/bin/sh\necho hi\n")
 
-	j, err := Start("closed-write-test", config.ResolvedCommand{Name: "ok", ScriptPath: filepath.Join(root, "ok.sh")}, nil, t.TempDir())
+	j, err := Start("closed-write-test", config.ResolvedCommand{Name: "ok", ScriptPath: filepath.Join(root, "ok.sh")}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestJobOutputNeverContainsScreenControl(t *testing.T) {
 		Name: "noisy",
 		Run:  `printf '\033[2J\033[3J\033[H\033[1;32mvite\033[0m ready\tin 5ms\n\033[1A\033[2K\033]0;title\007\033[?25l done\n'`,
 	}
-	j, err := Start("noisy", cmd, nil, t.TempDir())
+	j, err := Start("noisy", cmd, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestJobOutputNeverContainsScreenControl(t *testing.T) {
 }
 
 func TestScriptArgsArriveAsSeparateArguments(t *testing.T) {
-	dir := t.TempDir()
+	dir := testDir(t)
 	script := filepath.Join(dir, "show.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nfor a in \"$@\"; do echo \"[$a]\"; done\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestScriptArgsArriveAsSeparateArguments(t *testing.T) {
 		Params: []config.Param{{Name: "svc", Type: config.ParamString}, {Name: "opt", Type: config.ParamString}},
 		Args:   []string{"--svc", "{svc}", "--opt={opt}"},
 	}
-	j, err := Start("show", cmd, map[string]string{"svc": "my api; echo pwned", "opt": ""}, t.TempDir())
+	j, err := Start("show", cmd, map[string]string{"svc": "my api; echo pwned", "opt": ""}, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,9 +281,9 @@ func TestLogFileName(t *testing.T) {
 // A command name from an untrusted repo must not steer where its log
 // is written.
 func TestStartKeepsLogInsideLogsDir(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "ok.sh"), "#!/bin/sh\necho hi\n")
-	stateDir := filepath.Join(t.TempDir(), "state")
+	stateDir := filepath.Join(testDir(t), "state")
 
 	j, err := Start("../../escaped-1", config.ResolvedCommand{Name: "../../escaped", ScriptPath: filepath.Join(root, "ok.sh")}, nil, stateDir)
 	if err != nil {
@@ -301,11 +301,11 @@ func TestStartKeepsLogInsideLogsDir(t *testing.T) {
 }
 
 func TestStartSizedAndResize(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	script := filepath.Join(root, "size.sh")
 	writeExecutable(t, script, "#!/bin/sh\nstty size\necho \"panel=$LC_PANEL\"\nread x\nstty size\n")
 
-	j, err := StartSized("size", config.ResolvedCommand{Name: "size", ScriptPath: script}, nil, t.TempDir(), 80, 20)
+	j, err := StartSized("size", config.ResolvedCommand{Name: "size", ScriptPath: script}, nil, testDir(t), 80, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

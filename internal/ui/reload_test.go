@@ -37,7 +37,7 @@ func rowNames(m Model) []string {
 }
 
 func TestReloadKeepsSelectionAndFilter(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1"), cmd("b", "bravo", "1"), cmd("c", "charlie", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1"), cmd("b", "bravo", "1"), cmd("c", "charlie", "1")), testDir(t), testDir(t))
 	m = selectByName(t, m, "charlie")
 
 	// A new command lands before the selected one: the selection follows it.
@@ -63,7 +63,7 @@ func TestReloadKeepsSelectionAndFilter(t *testing.T) {
 }
 
 func TestReloadSaysWhatChanged(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1"), cmd("b", "bravo", "1"), cmd("c", "charlie", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1"), cmd("b", "bravo", "1"), cmd("c", "charlie", "1")), testDir(t), testDir(t))
 	m = m.applyLoaded(&Loaded{Groups: group(cmd("a", "alpha", "CHANGED"), cmd("c", "charlie", "1"), cmd("d", "delta", "1"))})
 
 	for _, want := range []string{"Reloaded:", "1 added (delta)", "1 removed (bravo)", "1 changed (alpha)"} {
@@ -82,7 +82,7 @@ func TestReloadSaysWhatChanged(t *testing.T) {
 
 func TestReloadIsQuietWhenTheListIsTheSame(t *testing.T) {
 	groups := func() []config.Group { return group(cmd("a", "alpha", "1")) }
-	m := ready(t, groups(), t.TempDir(), t.TempDir())
+	m := ready(t, groups(), testDir(t), testDir(t))
 	m = m.applyLoaded(&Loaded{Groups: groups()})
 	if m.reloadNote != "" || m.flash != "" {
 		t.Errorf("note %q flash %q: editing a script's body changes no command, so there's nothing to say", m.reloadNote, m.flash)
@@ -90,7 +90,7 @@ func TestReloadIsQuietWhenTheListIsTheSame(t *testing.T) {
 }
 
 func TestReloadListsOnlyNewWarnings(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t))
 	m = m.applyLoaded(&Loaded{Groups: group(cmd("a", "alpha", "1")), Warnings: []string{"old problem"}})
 	if !strings.Contains(m.reloadNote, "old problem") {
 		t.Fatalf("note = %q", m.reloadNote)
@@ -109,7 +109,7 @@ func TestReloadListsOnlyNewWarnings(t *testing.T) {
 }
 
 func TestReloadKeepsWarningsThatDontComeFromConfig(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir()).WithWarning("popups are unavailable")
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t)).WithWarning("popups are unavailable")
 	m = m.applyLoaded(&Loaded{Groups: group(cmd("a", "alpha", "1")), Warnings: []string{"from config"}})
 	if strings.Join(m.warnings, "|") != "from config|popups are unavailable" {
 		t.Errorf("warnings = %v", m.warnings)
@@ -123,7 +123,7 @@ func TestReloadLeavesJobsAndOpenFormsAlone(t *testing.T) {
 	jobs := len(m.jobs)
 
 	withForm := config.ResolvedCommand{ID: "global:f", Name: "f", Run: "true", Params: []config.Param{{Name: "x", Type: config.ParamString}}}
-	m.activeForm = newParamsForm(withForm, t.TempDir())
+	m.activeForm = newParamsForm(withForm, testDir(t))
 	form := m.activeForm
 
 	changed := withForm
@@ -139,7 +139,7 @@ func TestReloadLeavesJobsAndOpenFormsAlone(t *testing.T) {
 }
 
 func TestReloadHidesChangedRepoCommandsAgain(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1"), config.ResolvedCommand{ID: "project:own", Name: "own", Run: "1"}), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1"), config.ResolvedCommand{ID: "project:own", Name: "own", Run: "1"}), testDir(t), testDir(t))
 	own := []config.ResolvedCommand{{ID: "project:own", Name: "own", Run: "2"}}
 	full := group(cmd("a", "alpha", "1"), own[0])
 
@@ -185,7 +185,7 @@ func TestReloadHidesChangedRepoCommandsAgain(t *testing.T) {
 }
 
 func TestReloadKeepsAnOpenTrustPromptOpen(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t))
 	p := PendingTrust{State: trust.Unknown, Commands: []config.ResolvedCommand{{ID: "project:own", Name: "own"}}, Fingerprint: "f1"}
 	m = m.WithPendingTrust(p)
 	if !m.trustPromptOpen {
@@ -212,7 +212,7 @@ func (f *fakeReloader) Poll() (*Loaded, bool) {
 
 func TestReloadTimerLoop(t *testing.T) {
 	fr := &fakeReloader{results: []*Loaded{nil, {Groups: group(cmd("n", "new", "1"))}}}
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir()).WithReload(fr)
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t)).WithReload(fr)
 	if m.Init() == nil {
 		t.Fatal("a model with a reloader should start its timer")
 	}
@@ -239,8 +239,8 @@ func TestReloadTimerLoop(t *testing.T) {
 
 func TestReloadTimerRunsWhileAFormIsOpen(t *testing.T) {
 	fr := &fakeReloader{results: []*Loaded{{Groups: group(cmd("n", "new", "1"))}}}
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir()).WithReload(fr)
-	m.activeForm = newParamsForm(config.ResolvedCommand{ID: "x", Name: "x", Params: []config.Param{{Name: "p", Type: config.ParamString}}}, t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t)).WithReload(fr)
+	m.activeForm = newParamsForm(config.ResolvedCommand{ID: "x", Name: "x", Params: []config.Param{{Name: "p", Type: config.ParamString}}}, testDir(t))
 
 	_, c := m.Update(reloadTickMsg{})
 	updated, _ := m.Update(c())

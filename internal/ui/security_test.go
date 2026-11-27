@@ -19,7 +19,7 @@ import (
 // warning text. None of it may put a raw escape sequence on the
 // terminal: OSC 52 would write the clipboard, OSC 0 the window title.
 func TestRepoTextCannotInjectEscapeSequences(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestRepoTextCannotInjectEscapeSequences(t *testing.T) {
 		Desc:   "desc\x1b]52;c;eA==\x07",
 		Params: []config.Param{{Name: "p\x1b]0;P\x07", Default: "d\x1b]0;D\x07", Options: config.Opts("o\x1b]0;O\x07"), Type: config.ParamSelect}},
 	}}}}
-	m := New(groups, []string{"warn \x1b]0;W\x07"}, t.TempDir(), root)
+	m := New(groups, []string{"warn \x1b]0;W\x07"}, testDir(t), root)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = updated.(Model)
 
@@ -63,8 +63,8 @@ func shadowGroups(root string) []config.Group {
 }
 
 func TestShadowingCommandAsksBeforeFirstRun(t *testing.T) {
-	root := t.TempDir()
-	stateDir := t.TempDir()
+	root := testDir(t)
+	stateDir := testDir(t)
 	m := ready(t, shadowGroups(root), stateDir, root)
 
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -106,13 +106,13 @@ func TestShadowingCommandAsksBeforeFirstRun(t *testing.T) {
 }
 
 func TestShadowWarningIsPerRepo(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := testDir(t)
 	l := usage.Load(stateDir)
 	l.Record("/some/other/repo", "project:deploy", time.Now())
 	if err := l.Save(stateDir); err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root := testDir(t)
 	m := ready(t, shadowGroups(root), stateDir, root)
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.shadowConfirm == nil {
@@ -121,13 +121,13 @@ func TestShadowWarningIsPerRepo(t *testing.T) {
 }
 
 func TestShadowingCommandIsYellow(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	groups := append(shadowGroups(root), config.Group{Title: "Global", Commands: []config.ResolvedCommand{{ID: "global:other", Name: "other", Run: "true"}}})
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
-	m := ready(t, groups, t.TempDir(), root)
+	m := ready(t, groups, testDir(t), root)
 	list := m.renderList(40)
 	// The SGR parameters for the yellow foreground (on the selected row
 	// lipgloss merges them with the background into one sequence).

@@ -24,7 +24,7 @@ func inlineKey(m *inlineForm, s string) {
 func TestInlineFormConfirmFlow(t *testing.T) {
 	cmd := config.ResolvedCommand{Name: "deploy", ScriptPath: "x.sh", Confirm: "Deploy {env}?",
 		Params: []config.Param{{Name: "env", Type: config.ParamString, Default: "prod"}}}
-	m := &inlineForm{pf: newParamsForm(cmd, t.TempDir())}
+	m := &inlineForm{pf: newParamsForm(cmd, testDir(t))}
 	m.Init()
 
 	inlineKey(m, "alt+enter") // run now: valid, so on to the question
@@ -45,7 +45,7 @@ func TestInlineFormConfirmFlow(t *testing.T) {
 func TestInlineFormRunNowRefusedWhenRequiredEmpty(t *testing.T) {
 	cmd := config.ResolvedCommand{Name: "d", ScriptPath: "x.sh",
 		Params: []config.Param{{Name: "tag", Type: config.ParamString, Required: true}}}
-	m := &inlineForm{pf: newParamsForm(cmd, t.TempDir())}
+	m := &inlineForm{pf: newParamsForm(cmd, testDir(t))}
 	m.Init()
 	inlineKey(m, "alt+enter")
 	if m.quitting || m.pf.notice == "" {
@@ -55,7 +55,7 @@ func TestInlineFormRunNowRefusedWhenRequiredEmpty(t *testing.T) {
 
 func TestInlineFormNoParamsCancel(t *testing.T) {
 	cmd := config.ResolvedCommand{Name: "d", ScriptPath: "x.sh", Confirm: "Sure?"}
-	m := &inlineForm{pf: inlineParams(cmd, t.TempDir()), confirming: true}
+	m := &inlineForm{pf: inlineParams(cmd, testDir(t)), confirming: true}
 	inlineKey(m, "esc")
 	if !m.quitting || m.done {
 		t.Error("esc on a question with no form should cancel")
@@ -67,7 +67,7 @@ func TestFormProblemsFirstOption(t *testing.T) {
 		{Name: "env", Type: config.ParamSelect, Options: config.Opts("a", "b")},
 		{Name: "tag", Type: config.ParamString, Required: true},
 	}}
-	problems, values := FormProblems(cmd, t.TempDir())
+	problems, values := FormProblems(cmd, testDir(t))
 	if len(problems) != 1 || values["env"] != "a" {
 		t.Errorf("problems=%v values=%v", problems, values)
 	}

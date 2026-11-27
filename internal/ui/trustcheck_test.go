@@ -8,7 +8,7 @@ import (
 
 func TestLaunchRefusesRepoCommandWhenTrustCheckFails(t *testing.T) {
 	cmd := config.ResolvedCommand{ID: "project:build", Name: "build", Run: "true", FromRepo: true}
-	m := New([]config.Group{{Title: "This project", Commands: []config.ResolvedCommand{cmd}}}, nil, t.TempDir(), t.TempDir())
+	m := New([]config.Group{{Title: "This project", Commands: []config.ResolvedCommand{cmd}}}, nil, testDir(t), testDir(t))
 	calls := 0
 	m = m.WithTrustCheck(func() *Loaded {
 		calls++

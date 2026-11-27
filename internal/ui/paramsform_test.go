@@ -18,7 +18,7 @@ import (
 // cache's locking; this test is what gives -race something real to
 // run through, since the form had no coverage at all before this.
 func TestParamsFormOptionsCmdLoadsAsynchronously(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
 		{ID: "project:deploy", Name: "deploy", Run: "echo hi", Params: []config.Param{
 			{Name: "env", Type: config.ParamSelect, Options: config.Opts("dev", "staging")},
@@ -29,7 +29,7 @@ func TestParamsFormOptionsCmdLoadsAsynchronously(t *testing.T) {
 		}},
 	}}}
 
-	m := ready(t, groups, t.TempDir(), root)
+	m := ready(t, groups, testDir(t), root)
 	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("expected a params form to open")
@@ -49,7 +49,7 @@ func TestMultiParamDefaultPreselects(t *testing.T) {
 	cmd := config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{
 		{Name: "features", Type: config.ParamMulti, Options: config.Opts("logging", "metrics", "tracing"), Default: "logging,tracing"},
 	}}
-	pf := newParamsForm(cmd, t.TempDir())
+	pf := newParamsForm(cmd, testDir(t))
 	pf.form.Init()
 	if got := pf.values()["features"]; got != "logging,tracing" {
 		t.Errorf("features = %q, want the default preselected", got)
@@ -62,7 +62,7 @@ func TestPreviewShowsScriptArgsQuoted(t *testing.T) {
 		Params: []config.Param{{Name: "svc", Type: config.ParamString, Default: "my api"}},
 		Args:   []string{"--svc", "{svc}"},
 	}
-	pf := newParamsForm(cmd, t.TempDir())
+	pf := newParamsForm(cmd, testDir(t))
 	if got, want := pf.preview(), "$ /s/deploy.sh --svc 'my api'"; got != want {
 		t.Errorf("preview = %q, want %q", got, want)
 	}
@@ -80,7 +80,7 @@ func TestPreviewMasksSecrets(t *testing.T) {
 		{Name: "script", ScriptPath: "/s/login.sh", Params: params},
 	}
 	for _, cmd := range cases {
-		pf := newParamsForm(cmd, t.TempDir())
+		pf := newParamsForm(cmd, testDir(t))
 		got := pf.preview()
 		if strings.Contains(got, "hunter2") {
 			t.Errorf("%s: preview shows the secret: %q", cmd.Name, got)
@@ -94,7 +94,7 @@ func TestPreviewMasksSecrets(t *testing.T) {
 	}
 
 	// An empty secret shows as empty, so you can see it still needs filling in.
-	pf := newParamsForm(config.ResolvedCommand{Name: "e", ScriptPath: "/s/x.sh", Params: []config.Param{{Name: "token", Type: config.ParamSecret}}}, t.TempDir())
+	pf := newParamsForm(config.ResolvedCommand{Name: "e", ScriptPath: "/s/x.sh", Params: []config.Param{{Name: "token", Type: config.ParamSecret}}}, testDir(t))
 	if got := pf.preview(); strings.Contains(got, secretMask) {
 		t.Errorf("empty secret should not show the mask: %q", got)
 	}
@@ -110,7 +110,7 @@ func TestProfileOverriddenMultiIsPreselected(t *testing.T) {
 	}); len(w) != 0 {
 		t.Fatal(w)
 	}
-	pf := newParamsForm(groups[0].Commands[0], t.TempDir())
+	pf := newParamsForm(groups[0].Commands[0], testDir(t))
 	pf.form.Init()
 	if got := pf.values()["features"]; got != "logging,audit" {
 		t.Errorf("features = %q, want logging,audit preselected", got)
@@ -126,7 +126,7 @@ func TestFormShowsLabelsAndSendsValues(t *testing.T) {
 			{Label: "Ay\x1b]0;x\x07", Value: "/a"}, {Label: "Bee", Value: "/b"},
 		}},
 	}}
-	pf := newParamsForm(cmd, t.TempDir())
+	pf := newParamsForm(cmd, testDir(t))
 	pf.form.Init()
 	view := pf.form.View()
 	if !strings.Contains(view, "cast") || !strings.Contains(view, "Bee") || strings.Contains(view, "/r/") {
@@ -143,7 +143,7 @@ func TestFormShowsLabelsAndSendsValues(t *testing.T) {
 }
 
 func TestToOptionsLabelModes(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	pf := newParamsForm(config.ResolvedCommand{Name: "x", Run: "true", Params: []config.Param{{Name: "s", Type: config.ParamString}}}, root)
 	p := config.Param{Name: "pom", Type: config.ParamSelect, Label: config.LabelRelative}
 	opts := pf.toOptions(p, config.Opts(root+"/svc/api/pom.xml", "./web/pom.xml"))
@@ -166,7 +166,7 @@ func TestOptionsCmdWithoutDependsOnLoads(t *testing.T) {
 			{Name: "repo", Type: config.ParamSelect, OptionsCmd: `printf '/r/vandag\tVandag\n/r/cast\n'`},
 		}},
 	}}}
-	m := ready(t, groups, t.TempDir(), t.TempDir())
+	m := ready(t, groups, testDir(t), testDir(t))
 	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("expected a params form to open")
@@ -187,7 +187,7 @@ func TestMultiDefaultReachesCommandAnywhere(t *testing.T) {
 		{Name: "static", Type: config.ParamMulti, Options: config.Opts("a", "b", "c"), Default: "a,c"},
 		{Name: "dynamic", Type: config.ParamMulti, OptionsCmd: "echo a; echo b", Default: "b"},
 	}}
-	pf := newParamsForm(cmd, t.TempDir())
+	pf := newParamsForm(cmd, testDir(t))
 	pf.form.Init()
 	if v := pf.values(); v["static"] != "a,c" || v["dynamic"] != "b" {
 		t.Errorf("values = %v, want both multi defaults", v)
@@ -204,7 +204,7 @@ func optionsForm(t *testing.T, optionsCmd string, extra ...config.Param) Model {
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
 		{ID: "project:x", Name: "x", Run: "true", Params: params},
 	}}}
-	m := ready(t, groups, t.TempDir(), t.TempDir())
+	m := ready(t, groups, testDir(t), testDir(t))
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("expected a params form to open")

@@ -207,7 +207,7 @@ func TestSearchKeepsMatchingNewOutput(t *testing.T) {
 }
 
 func TestSlashInOutputWithNoJobDoesNotFilter(t *testing.T) {
-	m := ready(t, group(cmd("a", "alpha", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "alpha", "1")), testDir(t), testDir(t))
 	m.focus = focusOutput
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	if m.filtering || m.search.editing || m.flash == "" {
@@ -225,7 +225,7 @@ func TestSpacesCanBeTypedInFilterAndSearch(t *testing.T) {
 	// A space arrives as KeySpace (with the space in Runes), not KeyRunes.
 	space := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 
-	m := ready(t, group(cmd("a", "git: pull", "1"), cmd("b", "git: push", "1"), cmd("c", "gitpull", "1")), t.TempDir(), t.TempDir())
+	m := ready(t, group(cmd("a", "git: pull", "1"), cmd("b", "git: push", "1"), cmd("c", "gitpull", "1")), testDir(t), testDir(t))
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = typeText(t, m, "git:")
 	m, _ = sendKey(t, m, space)

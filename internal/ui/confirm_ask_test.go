@@ -26,7 +26,7 @@ func confirmGroups() []config.Group {
 }
 
 func TestConfirmAfterFormAndBack(t *testing.T) {
-	m := selectByName(t, ready(t, confirmGroups(), t.TempDir(), t.TempDir()), "deploy")
+	m := selectByName(t, ready(t, confirmGroups(), testDir(t), testDir(t)), "deploy")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ}) // run now
 	if m.confirm == nil || len(m.jobs) != 0 || m.activeForm != nil {
@@ -64,7 +64,7 @@ func TestConfirmAfterFormAndBack(t *testing.T) {
 }
 
 func TestConfirmWithoutFormAndOnRerun(t *testing.T) {
-	m := selectByName(t, ready(t, confirmGroups(), t.TempDir(), t.TempDir()), "wipe")
+	m := selectByName(t, ready(t, confirmGroups(), testDir(t), testDir(t)), "wipe")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.confirm == nil || m.confirm.form != nil {
 		t.Fatal("no confirm for a command without params")
@@ -88,12 +88,12 @@ func TestConfirmWithoutFormAndOnRerun(t *testing.T) {
 
 func askModel(t *testing.T, cmds ...config.ResolvedCommand) (Model, *ask.Server) {
 	t.Helper()
-	srv, err := ask.NewServer(t.TempDir())
+	srv, err := ask.NewServer(testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { srv.Close() })
-	m := ready(t, []config.Group{{Title: "Global", Commands: cmds}}, t.TempDir(), t.TempDir()).WithAsk(srv)
+	m := ready(t, []config.Group{{Title: "Global", Commands: cmds}}, testDir(t), testDir(t)).WithAsk(srv)
 	return m, srv
 }
 
@@ -305,7 +305,7 @@ func TestRealBinaryAskInPanel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the binary")
 	}
-	bin := t.TempDir() + "/lazycmd"
+	bin := testDir(t) + "/lazycmd"
 	if out, err := exec.Command("go", "build", "-o", bin, "../../cmd/lazycmd").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}

@@ -57,7 +57,7 @@ printf '\033]11;?\033\\'
 head -c 25 | od -An -c
 printf '\033[6n'
 head -c 6 | od -An -c`
-	j, err := Start("q1", config.ResolvedCommand{Name: "q", Run: script}, nil, t.TempDir())
+	j, err := Start("q1", config.ResolvedCommand{Name: "q", Run: script}, nil, testDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

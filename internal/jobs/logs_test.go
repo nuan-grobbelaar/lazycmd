@@ -11,7 +11,7 @@ import (
 )
 
 func TestPrepareStateMakesItPrivateAndPrunes(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "lazycmd")
+	state := filepath.Join(testDir(t), "lazycmd")
 	logs := filepath.Join(state, "logs")
 	if err := os.MkdirAll(logs, 0o755); err != nil { // as an older lazycmd made it
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestPrepareStateMakesItPrivateAndPrunes(t *testing.T) {
 }
 
 func TestLogFileIsPrivate(t *testing.T) {
-	state := t.TempDir()
+	state := testDir(t)
 	j, err := Start("echo-1", config.ResolvedCommand{Name: "echo", Run: "echo hi"}, nil, state)
 	if err != nil {
 		t.Fatal(err)

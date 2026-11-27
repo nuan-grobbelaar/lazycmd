@@ -61,7 +61,7 @@ func writeExecutable(t *testing.T, path, script string) {
 }
 
 func TestViewShowsAllThreePanelTitles(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	view := m.View()
 	for _, title := range []string{"[1] Commands", "[2] Jobs", "[3] Output"} {
 		if !strings.Contains(view, title) {
@@ -76,7 +76,7 @@ func TestViewShowsFormAsAnOverlay(t *testing.T) {
 			{Name: "who", Type: config.ParamString},
 		}},
 	}}}
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := m.View()
@@ -92,7 +92,7 @@ func TestViewShowsFormAsAnOverlay(t *testing.T) {
 
 func TestViewDoesNotPanicAtDegenerateSizes(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{0, 0}, {1, 1}, {5, 3}, {-1, -1}} {
-		m := New(testGroups(), nil, t.TempDir(), "/repo")
+		m := New(testGroups(), nil, testDir(t), "/repo")
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 		m = updated.(Model)
 		m.View() // must not panic
@@ -100,12 +100,12 @@ func TestViewDoesNotPanicAtDegenerateSizes(t *testing.T) {
 }
 
 func TestEmptyStateMessageDistinguishesNoCommandsFromNoMatches(t *testing.T) {
-	m := ready(t, nil, t.TempDir(), "/repo")
+	m := ready(t, nil, testDir(t), "/repo")
 	if !strings.Contains(m.renderList(40), "no commands found") {
 		t.Errorf("expected the no-commands-at-all message when nothing is configured")
 	}
 
-	m = ready(t, testGroups(), t.TempDir(), "/repo")
+	m = ready(t, testGroups(), testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("nonexistent")})
 	if !strings.Contains(m.renderList(40), "no matches") {
@@ -117,7 +117,7 @@ func TestEmptyStateMessageDistinguishesNoCommandsFromNoMatches(t *testing.T) {
 }
 
 func TestNewFlattensRowsWithHeaders(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	got := rowLabels(m)
 	want := []string{"Global", "alpha", "bravo", "This project", "charlie"}
 	if len(got) != len(want) {
@@ -134,7 +134,7 @@ func TestNewFlattensRowsWithHeaders(t *testing.T) {
 }
 
 func TestCursorMovementSkipsHeaders(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	// alpha(1) -> bravo(2) -> skip "This project"(3) -> charlie(4)
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	if m.rows[m.cursor].label != "bravo" {
@@ -152,7 +152,7 @@ func TestCursorMovementSkipsHeaders(t *testing.T) {
 }
 
 func TestFilterNarrowsRowsAndKeepsOnlyMatchingHeaders(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	if !m.filtering {
 		t.Fatal("expected filtering to be active after /")
@@ -168,7 +168,7 @@ func TestFilterNarrowsRowsAndKeepsOnlyMatchingHeaders(t *testing.T) {
 }
 
 func TestFilterBackspaceAndEsc(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
@@ -195,7 +195,7 @@ func TestFilterBackspaceAndEsc(t *testing.T) {
 }
 
 func TestHelpOverlayTogglesAndAnyKeyDismisses(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	if !m.helpActive {
 		t.Fatal("expected helpActive after ?")
@@ -207,7 +207,7 @@ func TestHelpOverlayTogglesAndAnyKeyDismisses(t *testing.T) {
 }
 
 func TestQuitKeysReturnTeaQuit(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	for _, key := range []string{"q", "ctrl+c"} {
 		var msg tea.KeyMsg
 		if key == "ctrl+c" {
@@ -226,13 +226,13 @@ func TestQuitKeysReturnTeaQuit(t *testing.T) {
 }
 
 func TestSelectRowWithNoParamsStartsARealJob(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "hi.sh"), "#!/bin/sh\necho hi\n")
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
 		{ID: "project:hi", Name: "hi", ScriptPath: filepath.Join(root, "hi.sh")},
 	}}}
 
-	m := ready(t, groups, t.TempDir(), root)
+	m := ready(t, groups, testDir(t), root)
 	m, cmd := sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeJob == nil {
 		t.Fatal("expected activeJob to be set")
@@ -261,7 +261,7 @@ func TestSelectRowWithParamsOpensFormInsteadOfRunning(t *testing.T) {
 			{Name: "who", Type: config.ParamString},
 		}},
 	}}}
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("expected a params form to open")
@@ -277,7 +277,7 @@ func TestEscAbortsOpenForm(t *testing.T) {
 			{Name: "who", Type: config.ParamString},
 		}},
 	}}}
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("expected a params form to open")
@@ -292,7 +292,7 @@ func TestEscAbortsOpenForm(t *testing.T) {
 }
 
 func TestPanelJumpKeys(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	press := func(m Model, msg tea.KeyMsg) Model { m, _ = sendKey(t, m, msg); return m }
 	right, left := tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyLeft}
 
@@ -321,7 +321,7 @@ func TestPanelJumpKeys(t *testing.T) {
 
 func TestAdhocCommandRunsTypedTextAsNamedJob(t *testing.T) {
 	groups := append([]config.Group{config.AdhocGroup()}, testGroups()...)
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	if m.rows[0].label != "Ad-hoc" {
 		t.Fatalf("first row = %q, want the Ad-hoc group above everything else", m.rows[0].label)
 	}
@@ -360,7 +360,7 @@ func TestAdhocCommandRunsTypedTextAsNamedJob(t *testing.T) {
 }
 
 func TestHeaderShowsProfileName(t *testing.T) {
-	m := ready(t, testGroups(), t.TempDir(), "/repo")
+	m := ready(t, testGroups(), testDir(t), "/repo")
 	if strings.Contains(m.renderHeader(), "profile") {
 		t.Error("header shows a profile when none matched")
 	}
@@ -380,7 +380,7 @@ func TestRunNowKeyNeedsRequiredFieldsThenRuns(t *testing.T) {
 			{Name: "tag", Type: config.ParamString, Pattern: `^[a-z]+$`},
 		},
 	}}}}
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // open the form
 	if m.activeForm == nil {
 		t.Fatal("form did not open")
@@ -431,7 +431,7 @@ func TestRunNowRefusesPatternMismatch(t *testing.T) {
 		ID: "g:x", Name: "x", Run: "true",
 		Params: []config.Param{{Name: "tag", Type: config.ParamString, Default: "BAD", Pattern: `^[a-z]+$`}},
 	}}}}
-	m := ready(t, groups, t.TempDir(), "/repo")
+	m := ready(t, groups, testDir(t), "/repo")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlJ})
 	if m.activeForm == nil || m.activeJob != nil {

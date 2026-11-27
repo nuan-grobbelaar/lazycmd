@@ -11,7 +11,7 @@ import (
 )
 
 func TestFinishedJobsAreRecordedAndListed(t *testing.T) {
-	state := t.TempDir()
+	state := testDir(t)
 	repo, _ := os.Getwd()
 
 	ok, err := Start("ok-1", config.ResolvedCommand{ID: "global:ok", Name: "ok", Run: "echo first"}, nil, state)
@@ -63,7 +63,7 @@ func TestFinishedJobsAreRecordedAndListed(t *testing.T) {
 }
 
 func TestHistoryIgnoresBadLines(t *testing.T) {
-	state := t.TempDir()
+	state := testDir(t)
 	os.MkdirAll(filepath.Join(state, "logs"), 0o700)
 	os.WriteFile(filepath.Join(state, "logs", "x.log"), []byte("hi"), 0o600)
 	lines := "not json\n" +

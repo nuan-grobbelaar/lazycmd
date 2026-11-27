@@ -52,7 +52,7 @@ func seed(t *testing.T, stateDir, repo, id string, values map[string]string) {
 func runes(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
 
 func TestRerunSelectedUsesLastAnswers(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	seed(t, state, repo, "global:deploy", map[string]string{"env": "prod", "tag": "v2"})
 	m := selectByName(t, ready(t, rerunGroups(), state, repo), "deploy")
 
@@ -72,7 +72,7 @@ func TestRerunSelectedUsesLastAnswers(t *testing.T) {
 }
 
 func TestRunLastHere(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	m := ready(t, rerunGroups(), state, repo)
 	m, _ = sendKey(t, m, runes("."))
 	if m.flash != "nothing run in this repo yet" || len(m.jobs) != 0 {
@@ -92,7 +92,7 @@ func TestRunLastHere(t *testing.T) {
 	}
 
 	// A different repo has its own history.
-	m2 := ready(t, rerunGroups(), state, t.TempDir())
+	m2 := ready(t, rerunGroups(), state, testDir(t))
 	m2, _ = sendKey(t, m2, runes("."))
 	if len(m2.jobs) != 0 {
 		t.Error("another repo's last command ran")
@@ -100,7 +100,7 @@ func TestRunLastHere(t *testing.T) {
 }
 
 func TestRerunWithSecretOpensFilledForm(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	m := selectByName(t, ready(t, rerunGroups(), state, repo), "login")
 
 	// Run it once through the form, with a secret.
@@ -128,7 +128,7 @@ func TestRerunWithSecretOpensFilledForm(t *testing.T) {
 }
 
 func TestRerunWithStaleAnswersOpensForm(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	cases := []struct {
 		values map[string]string
 		why    string
@@ -150,7 +150,7 @@ func TestRerunWithStaleAnswersOpensForm(t *testing.T) {
 }
 
 func TestRerunWithoutHistoryStartsFromDefaults(t *testing.T) {
-	m := selectByName(t, ready(t, rerunGroups(), t.TempDir(), t.TempDir()), "deploy")
+	m := selectByName(t, ready(t, rerunGroups(), testDir(t), testDir(t)), "deploy")
 	m, _ = sendKey(t, m, runes("R"))
 	if m.activeForm == nil || m.activeForm.values()["env"] != "dev" {
 		t.Fatal("R with no history should open the form with defaults")
@@ -161,7 +161,7 @@ func TestRerunWithoutHistoryStartsFromDefaults(t *testing.T) {
 }
 
 func TestHiddenCommandCantBeRerun(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	seed(t, state, repo, "project:evil", map[string]string{})
 	m := ready(t, rerunGroups(), state, repo) // project:evil isn't listed (e.g. not allowed yet)
 	m, _ = sendKey(t, m, runes("."))
@@ -171,7 +171,7 @@ func TestHiddenCommandCantBeRerun(t *testing.T) {
 }
 
 func TestTerminalCommandRunsInTerminal(t *testing.T) {
-	m := selectByName(t, ready(t, rerunGroups(), t.TempDir(), t.TempDir()), "pick")
+	m := selectByName(t, ready(t, rerunGroups(), testDir(t), testDir(t)), "pick")
 	if !strings.Contains(m.renderList(60), "⧉") {
 		t.Error("terminal command has no ⧉ marker")
 	}
@@ -187,7 +187,7 @@ func TestTerminalCommandRunsInTerminal(t *testing.T) {
 func TestPanelJobGetsViewportSize(t *testing.T) {
 	m := selectByName(t, ready(t, []config.Group{{Title: "Global", Commands: []config.ResolvedCommand{
 		{ID: "global:size", Name: "size", Run: "stty size"},
-	}}}, t.TempDir(), t.TempDir()), "size")
+	}}}, testDir(t), testDir(t)), "size")
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	want := []string{itoa(m.viewport.Height), itoa(m.viewport.Width)}
 	deadline := time.Now().Add(3 * time.Second)
@@ -204,7 +204,7 @@ func TestPanelJobGetsViewportSize(t *testing.T) {
 func itoa(n int) string { return strconv.Itoa(n) }
 
 func TestRerunStillAsksAboutShadowing(t *testing.T) {
-	state, repo := t.TempDir(), t.TempDir()
+	state, repo := testDir(t), testDir(t)
 	seed(t, state, repo, "project:deploy", map[string]string{"env": "prod"})
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
 		{ID: "project:deploy", Name: "deploy", Run: "true", Shadows: "/home/me/.config/lazycmd/scripts/deploy.sh",

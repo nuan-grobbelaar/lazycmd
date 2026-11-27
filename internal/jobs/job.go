@@ -120,8 +120,39 @@ func StartSized(id string, resolved config.ResolvedCommand, values map[string]st
 	j.stateDir = stateDir
 	j.history = historyRun{CmdID: resolved.ID, Name: resolved.Name, Repo: repo, Log: j.LogName, Started: j.startedAt}
 
+	startedMu.Lock()
+	started[j] = true
+	running.Add(1)
+	startedMu.Unlock()
 	go j.readLoop()
 	return j, nil
+}
+
+// started holds the jobs whose output is still being read, for StopAll.
+var (
+	startedMu sync.Mutex
+	started   = map[*Job]bool{}
+	running   sync.WaitGroup
+)
+
+// StopAll stops every job still running and waits up to timeout for all
+// of them to finish writing their output, log and history. It reports
+// whether they did. For tests: a job left running must not still be
+// writing into a temp folder that is being removed.
+func StopAll(timeout time.Duration) bool {
+	startedMu.Lock()
+	for j := range started {
+		j.Kill()
+	}
+	startedMu.Unlock()
+	done := make(chan struct{})
+	go func() { running.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // logFileName turns a job id into a file name that stays inside the
@@ -204,6 +235,12 @@ func paramEnv(values map[string]string) []string {
 }
 
 func (j *Job) readLoop() {
+	defer func() {
+		startedMu.Lock()
+		delete(started, j)
+		startedMu.Unlock()
+		running.Done()
+	}()
 	buf := make([]byte, 4096)
 	var queries queryScanner
 	for {

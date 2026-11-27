@@ -32,7 +32,7 @@ func pendingModel(t *testing.T, stateDir, root string, state trust.State) Model 
 }
 
 func TestTrustPromptHidesRepoCommandsUntilAllowed(t *testing.T) {
-	stateDir, root := t.TempDir(), t.TempDir()
+	stateDir, root := testDir(t), testDir(t)
 	m := pendingModel(t, stateDir, root, trust.Unknown)
 
 	if !m.trustPromptOpen {
@@ -82,14 +82,14 @@ func TestTrustPromptHidesRepoCommandsUntilAllowed(t *testing.T) {
 }
 
 func TestTrustPromptSaysWhenCommandsChanged(t *testing.T) {
-	m := pendingModel(t, t.TempDir(), t.TempDir(), trust.Changed)
+	m := pendingModel(t, testDir(t), testDir(t), trust.Changed)
 	if v := m.View(); !strings.Contains(v, "changed since you allowed them") {
 		t.Errorf("view:\n%s", v)
 	}
 }
 
 func TestTrustPromptBlocksOtherKeys(t *testing.T) {
-	m := pendingModel(t, t.TempDir(), t.TempDir(), trust.Unknown)
+	m := pendingModel(t, testDir(t), testDir(t), trust.Unknown)
 	for _, k := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("t")}, {Type: tea.KeyRunes, Runes: []rune("/")}, {Type: tea.KeyDown}} {
 		m, _ = sendKey(t, m, k)
 		if !m.trustPromptOpen || m.filtering || m.activeJob != nil {
@@ -106,7 +106,7 @@ func TestTrustPromptBlocksOtherKeys(t *testing.T) {
 // placeholder joins them in "This project".
 func TestTrustPlaceholderJoinsIncludedCommands(t *testing.T) {
 	limited := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{{ID: "project:inc", Name: "inc", Run: "true"}}}}
-	m := New(limited, nil, t.TempDir(), t.TempDir()).WithPendingTrust(PendingTrust{
+	m := New(limited, nil, testDir(t), testDir(t)).WithPendingTrust(PendingTrust{
 		Commands: []config.ResolvedCommand{{ID: "project:a", Name: "a"}, {ID: "project:b", Name: "b"}}, Fingerprint: "x", FullGroups: limited,
 	})
 	if got := strings.Join(rowLabels(m), "|"); got != "This project|2 not allowed: review…|inc" {

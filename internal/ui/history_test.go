@@ -39,7 +39,7 @@ func waitJob(t *testing.T, j *jobs.Job) {
 }
 
 func TestHistoryShowViewRerunHide(t *testing.T) {
-	state := t.TempDir()
+	state := testDir(t)
 	repo, _ := os.Getwd() // jobs record the folder they ran in
 	build := config.ResolvedCommand{ID: "global:build", Name: "build", Run: "echo built-it"}
 	runPast(t, state, build)
@@ -79,7 +79,7 @@ func TestHistoryShowViewRerunHide(t *testing.T) {
 }
 
 func TestHistoryRerunOfGoneCommand(t *testing.T) {
-	state := t.TempDir()
+	state := testDir(t)
 	repo, _ := os.Getwd()
 	runPast(t, state, config.ResolvedCommand{ID: "global:gone", Name: "gone", Run: "true"})
 
@@ -93,9 +93,9 @@ func TestHistoryRerunOfGoneCommand(t *testing.T) {
 }
 
 func TestJobsListScrollsToCursor(t *testing.T) {
-	m := New(nil, nil, t.TempDir(), t.TempDir())
+	m := New(nil, nil, testDir(t), testDir(t))
 	m.focus = focusJobs
-	state := t.TempDir()
+	state := testDir(t)
 	for i := 0; i < 8; i++ {
 		j, err := jobs.Start("j", config.ResolvedCommand{Name: string(rune('a' + i)), Run: "true"}, nil, state)
 		if err != nil {

@@ -19,7 +19,7 @@ func navForm(t *testing.T) *paramsForm {
 		{Name: "tag", Type: config.ParamString},
 		{Name: "services", Type: config.ParamMulti, Options: config.Opts("api", "web")},
 		{Name: "verbose", Type: config.ParamBool},
-	}}, t.TempDir())
+	}}, testDir(t))
 	pf.form.Init()
 	return pf
 }
@@ -173,7 +173,7 @@ func TestOtherFieldsAreNotAffectedByEditMode(t *testing.T) {
 
 func TestEditModeThroughTheModel(t *testing.T) {
 	m := ready(t, group(config.ResolvedCommand{ID: "global:t", Name: "t", Run: "true",
-		Params: []config.Param{{Name: "a", Type: config.ParamString}, {Name: "b", Type: config.ParamString}}}), t.TempDir(), t.TempDir())
+		Params: []config.Param{{Name: "a", Type: config.ParamString}, {Name: "b", Type: config.ParamString}}}), testDir(t), testDir(t))
 	m, _ = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.activeForm == nil {
 		t.Fatal("the form should be open")
@@ -255,7 +255,7 @@ func TestRequiredMarkGoesWhenFilled(t *testing.T) {
 	pf := newParamsForm(config.ResolvedCommand{Name: "req", Params: []config.Param{
 		{Name: "tag", Type: config.ParamString, Required: true},
 		{Name: "note", Type: config.ParamString},
-	}}, t.TempDir())
+	}}, testDir(t))
 	cmd := pf.form.Init()
 	run := func(c tea.Cmd) { // deliver huh's title update, as the model would
 		for _, msg := range drain(c) {
@@ -304,7 +304,7 @@ func TestFormHintLineFollowsTheFocusedField(t *testing.T) {
 		{Name: "services", Type: config.ParamMulti, Options: config.Opts("api", "web")},
 		{Name: "tag", Type: config.ParamString, Required: true},
 		{Name: "dry", Type: config.ParamBool},
-	}}, t.TempDir())
+	}}, testDir(t))
 	pf.form.Init()
 	hints := func() string { return ansi.Strip(pf.hintLine(200)) }
 	next := func() { press(pf, keyRight) }

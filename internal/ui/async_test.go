@@ -53,7 +53,7 @@ func pumpUntil(t *testing.T, m Model, cmd tea.Cmd, pred func(Model) bool, timeou
 }
 
 func TestPromptPopupOpensOnARealPauseAfterAJobFinished(t *testing.T) {
-	root := t.TempDir()
+	root := testDir(t)
 	writeExecutable(t, filepath.Join(root, "hi.sh"), "#!/bin/sh\necho hi\n")
 	writeExecutable(t, filepath.Join(root, "confirm.sh"), "#!/bin/sh\nprintf 'Proceed? [y/N] '\nread ans\necho done\n")
 	groups := []config.Group{{Title: "This project", Commands: []config.ResolvedCommand{
@@ -61,7 +61,7 @@ func TestPromptPopupOpensOnARealPauseAfterAJobFinished(t *testing.T) {
 		{ID: "project:confirm", Name: "confirm", ScriptPath: filepath.Join(root, "confirm.sh")},
 	}}}
 
-	m := ready(t, groups, t.TempDir(), root)
+	m := ready(t, groups, testDir(t), root)
 
 	// Run "hi" first and let its poll chain die out naturally, same as
 	// a real session running one quick command before a slower one.
