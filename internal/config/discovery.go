@@ -73,10 +73,20 @@ func DiscoverWith(globalDir, projectDir string, extra []ResolvedCommand) (groups
 		projectCmds = append(projectCmds, fileCmds...)
 	}
 	have := make(map[string]bool, len(projectCmds))
-	for _, c := range projectCmds {
+	byScript := make(map[string]int, len(projectCmds))
+	for i, c := range projectCmds {
 		have[c.Name] = true
+		if c.ScriptPath != "" {
+			byScript[filepath.Clean(c.ScriptPath)] = i
+		}
 	}
 	for _, c := range extra {
+		// A profile sidecar for a script the repo already lists gives
+		// that script its form: it replaces the repo's entry.
+		if i, ok := byScript[filepath.Clean(c.ScriptPath)]; ok && c.ScriptPath != "" {
+			projectCmds[i] = c
+			continue
+		}
 		if have[c.Name] {
 			warnings = append(warnings, fmt.Sprintf("included command %q (%s) skipped: the project already defines one with that name", c.Name, c.ScriptPath))
 			continue
@@ -214,7 +224,7 @@ func loadCommandsFileAt(path string) ([]ResolvedCommand, []string) {
 		cmd := ResolvedCommand{ID: "project:" + name, Name: name}
 		applySpec(&cmd, spec)
 		if hasScript {
-			cmd.ScriptPath = filepath.Join(projectDir, spec.Script)
+			cmd.ScriptPath = expandPath(spec.Script, projectDir)
 		}
 		if err := validateCommand(cmd); err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: command %q: %v", path, name, err))

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../schema/lazycmd-profile.schema.json
+#
+# Example profile for the inline demo: gives examples/inline/release.sh a
+# form without a sidecar beside it. Copy it and point path at this repo:
+#
+#   cp examples/projects/inline-demo.yaml ~/.config/lazycmd/projects/
+#   # then edit path: below
+#   lc examples/inline/release.sh
+path: ~/repos/lazycmd   # where you cloned this repo
+
+sidecars:
+  examples/inline/release.sh:
+    desc: Pretend release, with a form from the profile
+    params:
+      - { name: version, type: string, required: true, pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$' }
+      - { name: push, type: bool, default: "false" }
+    args: ["{version}"]

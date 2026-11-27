@@ -85,7 +85,7 @@ func TestProfileIncludes(t *testing.T) {
 	if err := decodeStrict(profile, &pf); err != nil {
 		t.Fatal(err)
 	}
-	cmds, warnings := (&Profile{File: pf, Source: profile}).Includes()
+	cmds, warnings := (&Profile{File: pf, Source: profile}).Includes(t.TempDir())
 
 	byName := map[string]ResolvedCommand{}
 	for _, c := range cmds {

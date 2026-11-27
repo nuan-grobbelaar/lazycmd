@@ -5,7 +5,18 @@
 # that repo's services and starts on staging. Everywhere else it keeps the
 # options from its sidecar. It also shows maven.goals: this repo's Spring Boot
 # app runs through a company plugin, so spring-boot:run is detected by that.
+# And sidecars: gives the repo's own scripts/release.sh a form without
+# adding anything to the repo.
 path: ~/repos/my-app
+
+sidecars:
+  scripts/release.sh:
+    desc: Tag and push a release
+    params:
+      - { name: version, type: string, required: true, pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$' }
+      - { name: push, type: bool, default: "true" }
+    args: ["{version}", "--push={push}"]
+    confirm: "Release {version}?"
 
 params:
   deploy:

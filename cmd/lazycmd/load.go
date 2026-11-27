@@ -47,7 +47,7 @@ func (a *app) load() ui.Loaded {
 	profileName := ""
 	if profile != nil {
 		var w []string
-		included, w = profile.Includes()
+		included, w = profile.Includes(a.cwd)
 		warnings = append(warnings, w...)
 		profileFeatures = append(profileFeatures, profile.File.FeaturesFile)
 		profileName = strings.TrimSuffix(filepath.Base(profile.Source), filepath.Ext(profile.Source))

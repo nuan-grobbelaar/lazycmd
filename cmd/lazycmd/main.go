@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -36,6 +37,15 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lazycmd:", err)
 		os.Exit(1)
+	}
+
+	// `lazycmd <script> [args...]`: run one script here, without the TUI.
+	if len(os.Args) > 1 {
+		if strings.HasPrefix(os.Args[1], "-") {
+			fmt.Fprintf(os.Stderr, "lazycmd: unknown option %s\nusage: lazycmd [<script> [name=value...]] | lazycmd ask ... | lazycmd pick ...\n", os.Args[1])
+			os.Exit(2)
+		}
+		os.Exit(runInline(globalDir, cwd, os.Args[1], os.Args[2:], term.IsTerminal(os.Stdin.Fd()), os.Stderr))
 	}
 
 	// Panel jobs can't ask the terminal about its colours, so lazycmd

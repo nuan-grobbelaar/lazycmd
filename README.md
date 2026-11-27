@@ -18,6 +18,7 @@ Or from source:
 ```bash
 make install     # installs lazycmd and the lc alias to GOBIN (or GOPATH/bin)
 cd ~/some/repo && lc
+lc scripts/deploy.sh   # or run one script right here: its form, then the script
 ```
 
 Opening lazycmd in a repo never executes anything from that repo's config. Commands only run after you select them, and a repo's own commands are only listed once you [allow them](#allowing-a-repos-commands). Text from the repo (command names, descriptions, the branch name in `.git/HEAD`, script names in `package.json`) has control characters made visible before it is drawn (ESC shows as `^[`), so a repo can't send escape sequences to your terminal.
@@ -32,6 +33,7 @@ Opening lazycmd in a repo never executes anything from that repo's config. Comma
 - [Asking before running: confirm](#asking-before-running-confirm)
 - [Asking questions from a script: lazycmd ask / pick](#asking-questions-from-a-script-lazycmd-ask--pick)
 - [Plain scripts and sidecars](#plain-scripts-and-sidecars)
+- [Running one script inline](#running-one-script-inline)
 - [commands.yaml](#commandsyaml)
 - [config.yaml: features and settings](#configyaml-features-and-settings)
 - [Features](#features)
@@ -169,7 +171,7 @@ One shape is used everywhere: sidecars, `commands.yaml` entries and files a prof
 | `terminal` | bool | `enter` runs it with the real terminal, like `t`, for interactive programs (fzf, vim, psql). Shown as `⧉` in the list |
 | `confirm` | bool or string | ask before running: `true` for "Run <name>?", or the question with `{param}` placeholders. See [confirm](#asking-before-running-confirm) |
 
-In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it.
+In `commands.yaml` an entry must set exactly one of `run` or `script`. In a sidecar the script is the file next to it. `script:` paths are relative to the file that names them; `~` and absolute paths work too.
 
 ```yaml
 desc: Deploy a service
@@ -315,6 +317,23 @@ A broken sidecar produces a warning and that script is skipped. The `.lazycmd.ya
 
 A complete example, with a script, its sidecar and a profile that changes its choices for one repo, is in [`examples/`](examples/).
 
+## Running one script inline
+
+```bash
+lc scripts/deploy.sh                    # form, confirm, then the script runs here
+lc scripts/deploy.sh env=prod tag=v1.2  # the form starts with these filled in
+lc ./build.sh --fast                    # no sidecar: runs at once, args passed through
+```
+
+`lc <script>` runs one script in the terminal you're in, without opening the TUI. The argument is a path to an executable file. `ask` and `pick` are taken (see [lazycmd ask / pick](#asking-questions-from-a-script-lazycmd-ask--pick)), so run a script with one of those names as `./ask`.
+
+- **With a sidecar**, the script's form shows below your prompt: the same fields, keys and checks as in the TUI, including `options_cmd`, followed by its `confirm` question if it has one. The sidecar is the `<name>.lazycmd.yaml` beside the script, or an entry in the matching [profile's `sidecars:`](#project-profiles), which wins. The profile's `params:`, `defaults:` and `confirm:` for it apply too. Extra arguments are `name=value` presets for the form; an unknown name, or a value that isn't one of a select's options, is an error.
+- **Without a sidecar** nothing is asked. The script runs straight away with your arguments as they are.
+- Either way, lazycmd then **replaces itself with the script** (`exec`). The output stays in your scrollback, Ctrl-C goes to the script, and the exit status is the script's own. `esc` or Ctrl-C in the form cancels with status 130. After the form, one line such as `deploy  $ scripts/deploy.sh prod` is left above the script's output, so you can see what ran.
+- Inside the script, [`lazycmd ask` / `lazycmd pick`](#asking-questions-from-a-script-lazycmd-ask--pick) ask on this terminal, as they do outside lazycmd.
+- **Without a terminal** (stdin is a pipe, or in CI) the form is skipped. The defaults and `name=value` arguments are the answers, a select with no default takes its first option, and a required field left empty is an error. A script with `confirm` refuses to run, since nothing can answer the question.
+- It runs no job: there's no log file, and it doesn't count towards "run last" or usage.
+
 ## commands.yaml
 
 `<repo>/.lazycmd/commands.yaml` holds commands that are inline (`run:`) or point at a script (`script:`, relative to the file):
@@ -450,6 +469,13 @@ include:
   - ~/shared/tools/commands.yaml        # a commands.yaml-shaped file
   - ~/shared/scripts                    # a folder of scripts
   - ./deploy.sh                         # a script (+ sidecar beside it)
+sidecars:                               # forms for scripts that live in the repo
+  scripts/deploy.sh:                    # path from the repo root
+    desc: Deploy a service
+    params:
+      - { name: env, type: select, options: [staging, prod] }
+    args: ["{env}"]
+  bin/release: ./vandag/release.lazycmd.yaml   # or a sidecar file, relative to this profile
 defaults:
   deploy-staging: { env: staging }
   "maven: test": { module: api, also_make: true }
@@ -468,6 +494,7 @@ maven:
 |---|---|
 | `path` / `paths` | the repo(s) this profile is for. `~` is expanded; a relative path is relative to the profile file. Matches the repo itself **or any folder below it** |
 | `include` | extra commands for "This project" |
+| `sidecars` | a form for a script that lives in the repo, without adding a sidecar to the repo |
 | `terminal` | list of commands (name or id, like `defaults`) that run with the real terminal on `enter` in this repo, e.g. a global script's sidecar that doesn't set it |
 | `confirm` | map of command (name or id) to `true` or a question: ask before running it in this repo. Adds or changes a confirm, never removes one |
 | `defaults` | preselected form values |
@@ -477,6 +504,12 @@ maven:
 **Matching.** With no `path`, the file name (without `.yaml`) must equal the repo folder's name, so `vandag.yaml` matches `~/repos/vandag`. If several profiles match, the first by file name wins. The header shows `profile <name>` when one matched.
 
 **include.** Each entry is one of: a script (its `<name>.lazycmd.yaml` beside it is picked up); a `<name>.lazycmd.yaml` sidecar (its script sits beside it, or the sidecar sets `run:` / `script:`); a `commands.yaml`-shaped file (any other `.yaml`/`.yml`); or a folder of scripts. A missing or invalid entry is a warning and the rest still load. The repo's own `.lazycmd/` wins over an included command with the same name, and an included command shadows a global one.
+
+**sidecars.** Gives a script in the repo a form (a description, params, args, `confirm`, `terminal`) while the sidecar stays in your config, for a repo that isn't yours to change or a team that doesn't use lazycmd.
+- The key is the script's path from the repo root (`scripts/deploy.sh`). It must stay inside the repo, exist and be executable; otherwise that entry is a warning.
+- The value is either the [command spec](#command-spec) written inline, or the path of a `.lazycmd.yaml` file (`~` is expanded, a relative path is relative to the profile). Either way it can't set `run:` or `script:`, since it describes the script it's keyed by. Unknown keys are errors, as in any sidecar.
+- The command is named after the script (`deploy`, id `project:deploy`) and listed under "This project". If the repo's `.lazycmd/` already lists the same script, the profile's sidecar replaces that entry.
+- It's your file pointing at a script you chose, so it doesn't wait for the repo's commands to be [allowed](#allowing-a-repos-commands). The script itself is still the repo's: after a `git pull` it runs whatever the script now says, as it would from a shell.
 
 **defaults.** Keys are a command's display name (`maven: test`) or its id (`global:deploy-staging`, `maven:test`, `project:deploy`), then param names. This works for any command: global, project, included, or a discovered feature command. The values only preselect; you can still change them in the form.
 - Values: strings, numbers, bools, and a list for a `multi` param.

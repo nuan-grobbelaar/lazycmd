@@ -23,6 +23,16 @@
       "description": "Commands to add to 'This project'. Each entry is a script (its <name>.lazycmd.yaml sidecar beside it is picked up), a <name>.lazycmd.yaml sidecar (its script sits beside it, or the sidecar sets run:/script:), a commands.yaml-shaped file, or a folder of scripts. ~ is expanded; relative paths are relative to this file. The repo's own .lazycmd/ wins on a name clash.",
       "items": { "type": "string" }
     },
+    "sidecars": {
+      "type": "object",
+      "description": "Forms for scripts that live in the repo, kept here instead of a sidecar in the repo. Keyed by the script's path from the repo root (e.g. scripts/deploy.sh); it must stay inside the repo and be executable. The value is the command spec inline, or the path of a .lazycmd.yaml file (~ expanded, relative to this profile). It can't set run or script. The command is named after the script and replaces the repo's own entry for the same script.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "description": "Path of a .lazycmd.yaml sidecar file." },
+          { "$ref": "lazycmd-commands.schema.json#/definitions/command" }
+        ]
+      }
+    },
     "defaults": {
       "type": "object",
       "description": "Preselected values for param forms, keyed by command name ('deploy-staging', 'maven: test') or id ('global:deploy-staging'), then by param name. Applies to any command, including discovered feature commands. Values stay editable in the form. A value can refer to another param of the same command as ${name}; references resolve when the form opens, from that param's default, and chain. A list preselects options of a multi param.",

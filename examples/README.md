@@ -14,6 +14,7 @@ Each script shows one or more lazycmd features. They only print, wait or ask que
 | [`features/maven-monorepo`](features/maven-monorepo/services) | the **`maven`** feature with no root pom: a `target` pick over `billing` (modules `api` and `web`) and `orders`; `spring-boot:run` offers only `billing › api`, `spotless:check` only `orders` |
 | [`features/monorepo-demo`](features/monorepo-demo) | **several projects in one repo**: `web` (npm + vite), `api` (python + compose) and `worker` (compose). `npm`, `vite`, `python` and `compose` commands each ask which project, and a compose project's services are listed for the one picked |
 | [`features/python-demo`](features/python-demo/pyproject.toml) | the **`python`** feature: a command for each script and task, and `pytest`, `ruff` and `mypy` since they're configured |
+| [`inline/`](inline) | **`lc <script>`**: run one script in your terminal without the TUI. `greet` has a sidecar (form, confirm, `lazycmd ask` mid-run, exit status), `plain` has none (runs at once), and `release` gets its form from a profile's **`sidecars:`** ([`projects/inline-demo.yaml`](projects/inline-demo.yaml)) |
 | [`projects/my-app.yaml`](projects/my-app.yaml) | a profile that changes `deploy`'s choices and defaults for one repo, and teaches the maven feature a wrapper plugin with **`maven.goals`** (so `spring-boot:run` shows up in a repo whose pom lists `acme-boot-maven-plugin`) |
 
 ## Try them in this repo
@@ -35,6 +36,21 @@ Things to try:
   ```
 
   Open `lc` here: `hello` under **This project** is yellow, and your global `hello` isn't listed. Press `enter`. Before the form opens, lazycmd says which of your scripts it hides and what it runs instead. `y` runs it and opens the form; anything else cancels, and nothing from the project has run. After that first run it isn't asked again in this repo. To see the question again, delete `~/.local/state/lazycmd/usage.json` (which also clears the usage counts). In any other repo, `hello` is your global one. Remove the link to finish: `rm ~/.config/lazycmd/scripts/hello.sh`.
+
+**Inline** (`lc <script>`, no TUI):
+
+```bash
+lc examples/inline/greet.sh            # form, confirm, a question mid-run, then: echo $?
+lc examples/inline/greet.sh name=Ada   # the form starts with name filled in
+lc examples/inline/plain.sh a "b c"    # no sidecar: runs at once
+lc examples/inline/greet.sh name=Ada </dev/null   # no terminal: refuses, since greet has a confirm
+```
+
+For `release.sh`, copy the profile and set its `path:` to this repo, then run `lc examples/inline/release.sh`: the form comes from the profile's `sidecars:`, though nothing sits beside the script.
+
+```bash
+mkdir -p ~/.config/lazycmd/projects && cp examples/projects/inline-demo.yaml ~/.config/lazycmd/projects/
+```
 
 **Features:** discovered commands come from the files in the folder you run `lc` in, so for `compose-demo` and `python-demo`:
 

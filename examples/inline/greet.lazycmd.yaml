@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../schema/lazycmd-commands.schema.json
+desc: Inline demo. Fill in the form, answer the question, then the script runs in this terminal.
+params:
+  - { name: name, type: string, required: true }
+  - { name: mood, type: select, options: [cheerful, grumpy, sleepy] }
+  - name: exit_code
+    type: select
+    options:
+      - { label: "0 (success)", value: "0" }
+      - { label: "3 (a failure, to see $? afterwards)", value: "3" }
+args: ["{name}"]
+confirm: "Greet {name} ({mood})?"

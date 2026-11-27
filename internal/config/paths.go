@@ -43,6 +43,7 @@ func WatchPaths(globalDir, projectDir string, profile *Profile) []string {
 		for _, entry := range profile.File.Include {
 			paths = append(paths, expandPath(entry, base))
 		}
+		paths = append(paths, profile.SidecarFiles()...)
 	}
 	return paths
 }

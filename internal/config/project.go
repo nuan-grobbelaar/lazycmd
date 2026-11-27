@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ProfileFile is the shape of ~/.config/lazycmd/projects/<name>.yaml: a
@@ -26,11 +29,16 @@ import (
 //	terminal: [pick-repo]         # commands to run with the real terminal on enter
 //	params:                       # this repo's choices for select/multi params
 //	  echo-params: { features: { options: [a, b], default: [a] } }
+//	sidecars:                     # forms for scripts that live in the repo
+//	  scripts/deploy.sh:          #   path from the repo root
+//	    params: [{ name: env, type: select, options: [staging, prod] }]
+//	  bin/release: ./vandag/release.lazycmd.yaml   # or a sidecar file
 //	disable: [git]                # plus features:/maven:/npm:/... as in config.yaml
 type ProfileFile struct {
 	Path         string                              `yaml:"path,omitempty"`
 	Paths        []string                            `yaml:"paths,omitempty"`
 	Include      []string                            `yaml:"include,omitempty"`
+	Sidecars     map[string]SidecarRef               `yaml:"sidecars,omitempty"`
 	Defaults     map[string]map[string]any           `yaml:"defaults,omitempty"`
 	Params       map[string]map[string]ParamOverride `yaml:"params,omitempty"`
 	Terminal     []string                            `yaml:"terminal,omitempty"`
@@ -123,9 +131,11 @@ func resolveDir(p string) string {
 	return p
 }
 
-// Includes loads the commands the profile's include: entries point at.
-// A missing or invalid entry is a warning; the others still load.
-func (p *Profile) Includes() ([]ResolvedCommand, []string) {
+// Includes loads the commands the profile's include: entries point at,
+// and the repo scripts its sidecars: entries describe (repoRoot is the
+// repo the profile matched). A missing or invalid entry is a warning;
+// the others still load.
+func (p *Profile) Includes(repoRoot string) ([]ResolvedCommand, []string) {
 	base := filepath.Dir(p.Source)
 	var cmds []ResolvedCommand
 	var warnings []string
@@ -137,7 +147,123 @@ func (p *Profile) Includes() ([]ResolvedCommand, []string) {
 			warnings = append(warnings, fmt.Sprintf("%s (include %s): %s", p.Source, entry, msg))
 		}
 	}
+	for _, key := range sortedKeys(p.File.Sidecars) {
+		cmd, err := p.repoSidecar(repoRoot, key)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s (sidecars %s): %v", p.Source, key, err))
+			continue
+		}
+		cmds = append(cmds, cmd)
+	}
 	return cmds, warnings
+}
+
+// SidecarRef is one sidecars: entry: the spec written inline, or the
+// path of a .lazycmd.yaml file (~ expanded, relative to the profile).
+type SidecarRef struct {
+	File string
+	Spec *Command
+}
+
+// UnmarshalYAML takes a string (a file) or a mapping (the spec inline),
+// decoding the mapping as strictly as a sidecar file: an unknown key is
+// an error, not silently ignored.
+func (r *SidecarRef) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return n.Decode(&r.File)
+	case yaml.MappingNode:
+		data, err := yaml.Marshal(n)
+		if err != nil {
+			return err
+		}
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		var spec Command
+		if err := dec.Decode(&spec); err != nil {
+			return fmt.Errorf("line %d: %v", n.Line, err)
+		}
+		r.Spec = &spec
+		return nil
+	default:
+		return fmt.Errorf("line %d: a sidecars entry is a sidecar file's path or the spec itself", n.Line)
+	}
+}
+
+// SidecarFiles lists the sidecar files the profile's sidecars: entries
+// name, for reloading when one changes.
+func (p *Profile) SidecarFiles() []string {
+	var out []string
+	for _, key := range sortedKeys(p.File.Sidecars) {
+		if f := p.File.Sidecars[key].File; f != "" {
+			out = append(out, expandPath(f, filepath.Dir(p.Source)))
+		}
+	}
+	return out
+}
+
+// RepoSidecar finds the sidecars: entry for the script at path, a path
+// inside repoRoot. ok is false when the profile has none for it.
+func (p *Profile) RepoSidecar(repoRoot, path string) (cmd ResolvedCommand, ok bool, err error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return cmd, false, err
+	}
+	for _, key := range sortedKeys(p.File.Sidecars) {
+		if filepath.Join(repoRoot, filepath.FromSlash(key)) == abs {
+			cmd, err = p.repoSidecar(repoRoot, key)
+			return cmd, true, err
+		}
+	}
+	return cmd, false, nil
+}
+
+// repoSidecar builds the command for one sidecars: entry: the script at
+// key (a path from the repo root, which must stay inside the repo) with
+// the entry's spec. The entry describes that script, so it can't set
+// run: or script: of its own.
+func (p *Profile) repoSidecar(repoRoot, key string) (ResolvedCommand, error) {
+	var cmd ResolvedCommand
+	rel := filepath.FromSlash(key)
+	if !filepath.IsLocal(rel) {
+		return cmd, fmt.Errorf("must be a path inside the repo, from its root (like scripts/deploy.sh)")
+	}
+	script := filepath.Join(repoRoot, rel)
+	info, err := os.Stat(script)
+	switch {
+	case err != nil:
+		return cmd, fmt.Errorf("no such script in the repo")
+	case !info.Mode().IsRegular():
+		return cmd, fmt.Errorf("not a file")
+	case info.Mode()&0o111 == 0:
+		return cmd, fmt.Errorf("not executable (chmod +x it)")
+	}
+
+	ref := p.File.Sidecars[key]
+	spec := ref.Spec
+	where := "inline"
+	if spec == nil {
+		if ref.File == "" {
+			return cmd, fmt.Errorf("empty entry: give the spec or a sidecar file")
+		}
+		path := expandPath(ref.File, filepath.Dir(p.Source))
+		var s Command
+		if err := decodeStrict(path, &s); err != nil {
+			return cmd, fmt.Errorf("%s: %v", path, err)
+		}
+		spec, where = &s, path
+	}
+	if spec.Run != "" || spec.Script != "" {
+		return cmd, fmt.Errorf("%s: drop run:/script:; the entry describes %s", where, key)
+	}
+
+	name := strings.TrimSuffix(filepath.Base(rel), filepath.Ext(rel))
+	cmd = ResolvedCommand{ID: "project:" + name, Name: name, ScriptPath: script}
+	applySpec(&cmd, *spec)
+	if err := validateCommand(cmd); err != nil {
+		return ResolvedCommand{}, fmt.Errorf("%s: %v", where, err)
+	}
+	return cmd, nil
 }
 
 func loadInclude(path string) ([]ResolvedCommand, []string) {
@@ -189,7 +315,7 @@ func loadSidecarInclude(dir, name string) ([]ResolvedCommand, []string) {
 	case spec.Run != "":
 		// inline body: nothing more to find
 	case spec.Script != "":
-		cmd.ScriptPath = filepath.Join(dir, spec.Script)
+		cmd.ScriptPath = expandPath(spec.Script, dir)
 	default:
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
