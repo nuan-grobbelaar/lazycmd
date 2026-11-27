@@ -55,7 +55,8 @@ The left column has `[1] Commands` over `[2] Jobs`. `[3] Output` fills the right
 | `/` | Commands | filter by name (`enter` keeps it, `esc` clears it) |
 | `enter` | Jobs | show that job in the Output panel |
 | `x` | Jobs | stop the job |
-| `r` | Jobs | restart it with the same params |
+| `r` | Jobs | restart it with the same params (an earlier run: with the answers last given to that command, like `R`) |
+| `H` | Jobs | show or hide this repo's **earlier runs**, from past sessions, above this session's jobs (`[2] Jobs + history`). `enter` on one shows its saved output and how it ended |
 | `?` before a job | Jobs | it's waiting for an answer (`lazycmd ask` / `pick`, or a prompt): view it to answer |
 | `/` | Output | search the output (`enter` keeps the search, `esc` clears it) |
 | `n` / `N` | Output | next / previous match of the search |
@@ -153,6 +154,7 @@ Allowed repos are kept in `~/.local/state/lazycmd/trust.json` (readable only by 
   last.json                         # your last answers per command, for . and R
   trust.json                        # repos whose commands you allowed
   logs/                             # one log file per run
+  history.jsonl                     # finished runs, for H in the Jobs panel
 ```
 
 An executable file directly inside a `scripts/` folder becomes a command named after the file without its extension (`deploy-staging.sh` → `deploy-staging`). Files that aren't executable are ignored.
@@ -526,7 +528,7 @@ maven:
 
 ## State: logs and usage
 
-- `~/.local/state/lazycmd/logs/<job>.log` holds each run's output (as the program wrote it). The state folder and its logs are readable only by you (folders `0700`, files `0600`), since output can hold tokens; lazycmd fixes the modes of folders an older version created. The newest 200 logs are kept, older ones are deleted when lazycmd starts.
+- `~/.local/state/lazycmd/logs/<time>-<job>.log` holds each run's output (as the program wrote it), and `history.jsonl` a line per finished run (command, repo, start time, duration, exit code, log file) for `H`. Only panel jobs are recorded; runs with the real terminal (`t`) and [inline runs](#running-one-script-inline) aren't. The state folder and its logs are readable only by you (folders `0700`, files `0600`), since output can hold tokens; lazycmd fixes the modes of folders an older version created. The newest 200 logs are kept, older ones are deleted when lazycmd starts, and `H` lists up to 50 earlier runs per repo. A long log shows its last 4 MB.
 - `~/.local/state/lazycmd/trust.json` holds the repos whose commands you allowed, see [above](#allowing-a-repos-commands).
 - `~/.local/state/lazycmd/last.json` (readable only by you) holds, per repo, the answers you last gave each command and which command ran last, for `.` and `R`. Secret params are never saved. Delete it to forget them.
 - `~/.local/state/lazycmd/usage.json` (readable only by you) holds decayed run counts per repo and command id. It only orders the Global group; delete it to reset. A missing or corrupt file just starts fresh.

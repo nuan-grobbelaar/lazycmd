@@ -109,7 +109,7 @@ func TestStartTeesOutputToLogFile(t *testing.T) {
 	}
 	waitForStatus(t, j, StatusSucceeded, 2*time.Second)
 
-	data, err := os.ReadFile(filepath.Join(stateDir, "logs", "tee-test.log"))
+	data, err := os.ReadFile(filepath.Join(stateDir, "logs", j.LogName))
 	if err != nil {
 		t.Fatalf("log file: %v", err)
 	}

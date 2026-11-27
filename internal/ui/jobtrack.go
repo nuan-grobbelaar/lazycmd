@@ -22,4 +22,6 @@ type trackedJob struct {
 
 	asks     []*ask.Pending // questions from lazycmd ask/pick, oldest first
 	askToken string         // its LC_ASK_TOKEN, forgotten when it ends
+
+	past *jobs.PastJob // set for an earlier run, listed from history
 }

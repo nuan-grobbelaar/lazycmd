@@ -55,6 +55,13 @@ type Job struct {
 	ptmx    *os.File
 	cmd     *exec.Cmd
 	logFile *os.File
+
+	// LogName is the job's log file in stateDir/logs ("" if none could
+	// be made). history records it, finished, for the history view.
+	LogName  string
+	history  historyRun
+	stateDir string
+	past     bool // loaded from history: no process, nothing to stop
 }
 
 // Start launches resolved as a PTY-backed job and begins streaming its
@@ -99,13 +106,19 @@ func StartSized(id string, resolved config.ResolvedCommand, values map[string]st
 	}
 
 	// A log holds everything the command printed, tokens included, so
-	// only the user can read it.
-	logPath := filepath.Join(stateDir, "logs", logFileName(id))
+	// only the user can read it. The start time keeps logs from earlier
+	// sessions apart: job ids start again from 1 each time.
+	logName := j.startedAt.Format("20060102-150405") + "-" + logFileName(id)
+	logPath := filepath.Join(stateDir, "logs", logName)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err == nil {
 		if f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600); err == nil {
 			j.logFile = f
+			j.LogName = logName
 		}
 	}
+	repo, _ := os.Getwd() // jobs run in lazycmd's own folder, the repo
+	j.stateDir = stateDir
+	j.history = historyRun{CmdID: resolved.ID, Name: resolved.Name, Repo: repo, Log: j.LogName, Started: j.startedAt}
 
 	go j.readLoop()
 	return j, nil
@@ -237,8 +250,13 @@ func (j *Job) readLoop() {
 	} else {
 		j.status = StatusSucceeded
 	}
+	run := j.history
+	run.Status, run.ExitCode, run.DurationMS = j.status.String(), j.exitCode, j.endedAt.Sub(j.startedAt).Milliseconds()
 	j.mu.Unlock()
 
+	if run.Log != "" {
+		appendHistory(j.stateDir, run) // best effort
+	}
 	j.Buffer.Touch()
 }
 
@@ -256,7 +274,7 @@ func (j *Job) Snapshot() (status Status, exitCode int, duration time.Duration) {
 // Kill terminates the job's process. Used when the app is shutting down
 // with jobs still running in the background.
 func (j *Job) Kill() {
-	if j.cmd.Process != nil {
+	if j.cmd != nil && j.cmd.Process != nil {
 		_ = j.cmd.Process.Kill()
 	}
 }

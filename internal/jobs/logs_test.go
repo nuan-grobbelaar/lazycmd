@@ -49,7 +49,7 @@ func TestLogFileIsPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForStatus(t, j, StatusSucceeded, 4*time.Second)
-	info, err := os.Stat(filepath.Join(state, "logs", "echo-1.log"))
+	info, err := os.Stat(filepath.Join(state, "logs", j.LogName))
 	if err != nil {
 		t.Fatal(err)
 	}

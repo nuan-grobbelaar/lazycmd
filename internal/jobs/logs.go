@@ -41,11 +41,11 @@ func PrepareState(stateDir string, keep int) {
 		}
 		files = append(files, logFile{filepath.Join(logs, e.Name()), info.ModTime().UnixNano()})
 	}
-	if len(files) <= keep {
-		return
+	if len(files) > keep {
+		sort.Slice(files, func(i, j int) bool { return files[i].mod > files[j].mod })
+		for _, f := range files[keep:] {
+			_ = os.Remove(f.path)
+		}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].mod > files[j].mod })
-	for _, f := range files[keep:] {
-		_ = os.Remove(f.path)
-	}
+	compactHistory(stateDir)
 }

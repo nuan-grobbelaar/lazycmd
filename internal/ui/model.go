@@ -79,13 +79,18 @@ type Model struct {
 	// when they are, else a freshly loaded list (with them held back).
 	trustCheck func() *Loaded
 
-	viewport    viewport.Model
-	followTail  bool
-	search      searchState // the Output panel's search
-	activeJob   *trackedJob
-	activeHdr   string // "$ name\n", prefixed to the job's buffer content
-	jobs        []*trackedJob
-	jobsCursor  int
+	viewport   viewport.Model
+	followTail bool
+	search     searchState // the Output panel's search
+	activeJob  *trackedJob
+	activeHdr  string // "$ name\n", prefixed to the job's buffer content
+	jobs       []*trackedJob
+	jobsCursor int // into jobRows()
+
+	// showHistory lists this repo's earlier runs (history) above this
+	// session's jobs in the Jobs panel, oldest first; H toggles it.
+	showHistory bool
+	history     []*trackedJob
 	lastVersion uint64
 	polling     bool // whether a poll tick chain is currently in flight
 	jobSeq      int
@@ -930,30 +935,99 @@ func (m Model) commandByID(id string) (config.ResolvedCommand, bool) {
 // displayed, stop one, or restart it identically to how it was run the
 // first time.
 func (m Model) updateJobsFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := m.jobRows()
+	var sel *trackedJob
+	if m.jobsCursor >= 0 && m.jobsCursor < len(rows) {
+		sel = rows[m.jobsCursor]
+	}
 	switch msg.String() {
 	case "up", "k":
 		if m.jobsCursor > 0 {
 			m.jobsCursor--
 		}
 	case "down", "j":
-		if m.jobsCursor < len(m.jobs)-1 {
+		if m.jobsCursor < len(rows)-1 {
 			m.jobsCursor++
 		}
+	case "H":
+		m.toggleHistory()
 	case "enter":
-		if m.jobsCursor >= 0 && m.jobsCursor < len(m.jobs) {
-			m.switchToJob(m.jobs[m.jobsCursor])
+		if sel != nil {
+			if sel.past != nil {
+				sel.past.Load()
+			}
+			m.switchToJob(sel)
 		}
 	case "x":
-		if m.jobsCursor >= 0 && m.jobsCursor < len(m.jobs) {
-			m.jobs[m.jobsCursor].job.Kill()
+		if sel != nil && sel.past == nil {
+			sel.job.Kill()
 		}
 	case "r":
-		if m.jobsCursor >= 0 && m.jobsCursor < len(m.jobs) {
-			tj := m.jobs[m.jobsCursor]
-			return m.run(tj.cmd, runPanel, tj.values, nil)
+		switch {
+		case sel == nil:
+		case sel.past != nil:
+			return m.rerunPast(sel)
+		default:
+			return m.run(sel.cmd, runPanel, sel.values, nil)
 		}
 	}
 	return m, nil
+}
+
+// historyLimit is how many earlier runs H lists.
+const historyLimit = 50
+
+// jobRows is what the Jobs panel lists: with history shown, this repo's
+// earlier runs (oldest first), then this session's jobs.
+func (m Model) jobRows() []*trackedJob {
+	if !m.showHistory || len(m.history) == 0 {
+		return m.jobs
+	}
+	return append(append([]*trackedJob(nil), m.history...), m.jobs...)
+}
+
+// toggleHistory shows or hides earlier runs. They're read afresh each
+// time they're shown, so runs from another lazycmd since are there too.
+// The cursor stays on the job it was on.
+func (m *Model) toggleHistory() {
+	if m.showHistory {
+		m.jobsCursor = max(0, m.jobsCursor-len(m.history))
+		m.showHistory, m.history = false, nil
+		return
+	}
+	skip := map[string]bool{}
+	for _, tj := range m.jobs {
+		skip[tj.job.LogName] = true
+	}
+	past := jobs.History(m.stateDir, m.projectRoot, historyLimit, skip)
+	m.history = make([]*trackedJob, 0, len(past))
+	for i := len(past) - 1; i >= 0; i-- { // oldest first
+		p := past[i]
+		m.history = append(m.history, &trackedJob{job: p.Job, cmd: config.ResolvedCommand{ID: p.CmdID, Name: safetext.Line(p.Name)}, past: p})
+	}
+	m.showHistory = true
+	if len(m.jobs) == 0 {
+		m.jobsCursor = max(0, len(m.history)-1)
+	} else {
+		m.jobsCursor += len(m.history)
+	}
+	if len(m.history) == 0 {
+		m.flash = "no earlier runs in this repo"
+	}
+}
+
+// rerunPast runs an earlier run's command again, the way R does: with
+// the answers last given to it in this repo.
+func (m Model) rerunPast(tj *trackedJob) (tea.Model, tea.Cmd) {
+	cmdSpec, found := m.commandByID(tj.past.CmdID)
+	if !found {
+		m.flash = tj.cmd.Name + " isn't available here any more"
+		return m, nil
+	}
+	if entry, ok := m.lastStore.Get(m.projectRoot, cmdSpec.ID); ok {
+		return m.selectCommand(cmdSpec, runPanel, &entry)
+	}
+	return m.selectCommand(cmdSpec, runPanel, nil)
 }
 
 // selectRow runs the selected command directly if it takes no params,
@@ -1164,7 +1238,7 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 
 	tj := &trackedJob{job: job, cmd: cmdSpec, values: values, askToken: askToken}
 	m.jobs = append(m.jobs, tj)
-	m.jobsCursor = len(m.jobs) - 1
+	m.jobsCursor = len(m.jobRows()) - 1
 	m.switchToJob(tj)
 	return m, m.ensurePolling()
 }
@@ -1176,6 +1250,9 @@ func (m Model) startJob(cmdSpec config.ResolvedCommand, values map[string]string
 func (m *Model) switchToJob(tj *trackedJob) {
 	m.activeJob = tj
 	m.activeHdr = "$ " + tj.cmd.Name + "\n"
+	if tj.past != nil {
+		m.activeHdr = "$ " + tj.cmd.Name + "   (earlier run, " + tj.past.Started.Format("Mon 2 Jan 15:04") + ")\n"
+	}
 	_, version := tj.job.Buffer.Snapshot()
 	m.lastVersion = version
 	m.followTail = true
@@ -1340,7 +1417,11 @@ func (m Model) renderBase() string {
 	leftWidth, outputWidth, jobsH, bodyHeight := m.dims()
 
 	cmdPanel := renderPanel("[1] Commands", m.renderList(leftWidth-2), leftWidth, bodyHeight-jobsH, m.focus == focusList)
-	jobsPanel := renderPanel("[2] Jobs", m.renderJobsList(leftWidth-2), leftWidth, jobsH, m.focus == focusJobs)
+	jobsTitle := "[2] Jobs"
+	if m.showHistory {
+		jobsTitle = "[2] Jobs + history"
+	}
+	jobsPanel := renderPanel(jobsTitle, m.renderJobsList(leftWidth-2, jobsH-2), leftWidth, jobsH, m.focus == focusJobs)
 	left := lipgloss.JoinVertical(lipgloss.Left, cmdPanel, jobsPanel)
 
 	outputTitle := "[3] Output"
@@ -1649,9 +1730,10 @@ func jobGlyph(tj *trackedJob, status jobs.Status) (string, lipgloss.Color) {
 	}
 }
 
-func (m Model) renderJobsList(width int) string {
-	if len(m.jobs) == 0 {
-		return lipgloss.NewStyle().Foreground(colorTextDim).Render("  no jobs yet")
+func (m Model) renderJobsList(width, height int) string {
+	rows := m.jobRows()
+	if len(rows) == 0 {
+		return lipgloss.NewStyle().Foreground(colorTextDim).Render("  no jobs yet · H earlier runs")
 	}
 
 	plainStyle := lipgloss.NewStyle().Foreground(colorTextSoft)
@@ -1659,9 +1741,24 @@ func (m Model) renderJobsList(width int) string {
 	amberStyle := lipgloss.NewStyle().Foreground(colorAmber)
 	selStyle := selectedRowStyle(true) // drawn only while Jobs has focus
 
+	// Only height rows fit: show the window that holds the cursor,
+	// keeping the newest at the bottom when the cursor is there.
+	first := 0
+	if height > 0 && len(rows) > height {
+		first = min(max(0, m.jobsCursor-height+1), len(rows)-height)
+		if m.jobsCursor < first {
+			first = m.jobsCursor
+		}
+	}
+	last := len(rows)
+	if height > 0 {
+		last = min(len(rows), first+height)
+	}
+
 	var b strings.Builder
-	for i, tj := range m.jobs {
-		if i > 0 {
+	for i := first; i < last; i++ {
+		tj := rows[i]
+		if i > first {
 			b.WriteByte('\n')
 		}
 		status, _, duration := tj.job.Snapshot()
@@ -1670,11 +1767,18 @@ func (m Model) renderJobsList(width int) string {
 		if status != jobs.StatusRunning && d < time.Minute {
 			detail = d.String()
 		}
+		if tj.past != nil {
+			detail = ago(time.Since(tj.past.Started))
+		}
 		right := dimStyle.Render(detail + " ")
 		if tj.needsInput {
 			right = amberStyle.Render("needs input ")
 		}
-		line := spread(" "+jobIcon(tj, status)+" "+tj.cmd.Name, right, width)
+		nameStyle := plainStyle
+		if tj.past != nil {
+			nameStyle = dimStyle
+		}
+		line := spread(" "+jobIcon(tj, status)+" "+nameStyle.Render(tj.cmd.Name), right, width)
 		switch {
 		case m.focus == focusJobs && i == m.jobsCursor:
 			// Styled pieces would end the band at their first colour
@@ -1693,7 +1797,7 @@ func (m Model) renderJobsList(width int) string {
 		case tj == m.activeJob:
 			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line))
 		default:
-			b.WriteString(plainStyle.Render(line))
+			b.WriteString(line)
 		}
 	}
 	return b.String()
@@ -1741,7 +1845,14 @@ func (m Model) keyBarText() string {
 	case m.focus == focusOutput:
 		return keyBar("↑/↓", "scroll", "/", "search", "i", "type into job", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	case m.focus == focusJobs:
-		return keyBar("↑/↓", "select", "enter", "view", "x", "stop", "r", "restart", "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
+		if m.flash != "" {
+			return lipgloss.NewStyle().Foreground(colorAmber).Render(" " + m.flash)
+		}
+		hist := "earlier runs"
+		if m.showHistory {
+			hist = "hide earlier runs"
+		}
+		return keyBar("↑/↓", "select", "enter", "view", "x", "stop", "r", "restart", "H", hist, "tab", "next panel", "alt+1-3", "jump", "?", "help", "q", "quit")
 	}
 	enterDesc := "run"
 	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].cmd.Terminal {
@@ -1806,6 +1917,7 @@ func (m Model) renderHelp() string {
 			row("enter", "view it in the output panel") + "\n" +
 			row("x", "stop it") + "\n" +
 			row("r", "restart it with the same params") + "\n" +
+			row("H", "show / hide this repo's earlier runs") + "\n" +
 			row("?", "the job is waiting for an answer: view it to answer"),
 
 		title.Render("Params form / filter / prompts") + "\n" +

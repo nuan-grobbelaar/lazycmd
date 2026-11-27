@@ -329,7 +329,7 @@ func TestSelectedJobRowIsOneBand(t *testing.T) {
 	defer m.jobs[0].job.Kill()
 	m.focus, m.jobsCursor = focusJobs, 0
 
-	row := strings.Split(m.renderJobsList(30), "\n")[0]
+	row := strings.Split(m.renderJobsList(30, 0), "\n")[0]
 	_, rest, ok := strings.Cut(ansi.Strip(row), "◐")
 	if !ok {
 		t.Fatalf("no running mark in %q", ansi.Strip(row))
